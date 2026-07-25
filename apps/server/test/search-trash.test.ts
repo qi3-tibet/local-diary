@@ -1,26 +1,33 @@
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createBeijingClock } from "../src/time/beijing.js";
 import { buildServer } from "../src/app.js";
+import { createDiaryDatabase } from "../src/db/client.js";
 import { EntryRepository } from "../src/entries/repository.js";
-import { createTestDatabase } from "@diary/test-support";
 import { purgeExpiredTrash } from "../src/trash/cleanup.js";
 
 describe("search, editing, and trash", () => {
   const servers: Array<ReturnType<typeof buildServer>> = [];
+  const dataRoots: string[] = [];
 
   afterEach(async () => {
     await Promise.all(servers.splice(0).map((server) => server.close()));
+    dataRoots.splice(0).forEach((dataRoot) => rmSync(dataRoot, { recursive: true, force: true }));
   });
 
   function createServer() {
-    const database = createTestDatabase();
+    const dataRoot = mkdtempSync(path.join(tmpdir(), "local-diary-search-trash-"));
+    const database = createDiaryDatabase(dataRoot);
     const repository = new EntryRepository(database);
     const server = buildServer({
       database,
       clock: createBeijingClock(() => new Date("2026-07-26T00:00:00.000Z")),
     });
     servers.push(server);
-    return { server, repository };
+    dataRoots.push(dataRoot);
+    return { server, repository, dataRoot };
   }
 
   async function publish(
@@ -34,7 +41,8 @@ describe("search, editing, and trash", () => {
   }
 
   it("searches title, body substrings, and tags while entries expose no display title", async () => {
-    const { server } = createServer();
+    const { server, dataRoot } = createServer();
+    expect(existsSync(path.join(dataRoot, "diary.sqlite"))).toBe(true);
     await publish(server);
 
     for (const query of ["雨后", "水滴", "树叶", "散步"]) {
@@ -65,6 +73,27 @@ describe("search, editing, and trash", () => {
       markdown: "修改后的正文",
       publishedAt: entry.publishedAt,
       edited: true,
+    });
+  });
+
+  it("does not mark an unchanged PATCH as edited", async () => {
+    const { server } = createServer();
+    const entry = await publish(server, {
+      title: "雨后的街道",
+      markdown: "树叶上的水滴声",
+      tags: ["散步", "夜晚"],
+    });
+
+    const response = await server.inject({
+      method: "PATCH",
+      url: `/api/v1/entries/${entry.id}`,
+      payload: { title: entry.title, markdown: entry.markdown, tags: [...entry.tags].reverse() },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      updatedAt: entry.updatedAt,
+      edited: false,
     });
   });
 

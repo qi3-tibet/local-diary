@@ -88,6 +88,11 @@ export class EntryRepository {
     const update = this.db.transaction(() => {
       const before = this.getPublishedById(id);
       if (!before) return null;
+      if (
+        before.title === value.title
+        && before.markdown === value.markdown
+        && this.sameTags(before.tags, value.tags)
+      ) return before;
       const now = new Date().toISOString();
 
       this.db.prepare(`
@@ -203,6 +208,14 @@ export class EntryRepository {
 
   private ftsPhrase(query: string): string {
     return `"${query.replaceAll('"', '""')}"`;
+  }
+
+  private sameTags(left: string[], right: string[]): boolean {
+    const normalized = (tags: string[]) => [...new Set(tags)].sort();
+    const normalizedLeft = normalized(left);
+    const normalizedRight = normalized(right);
+    return normalizedLeft.length === normalizedRight.length
+      && normalizedLeft.every((tag, index) => tag === normalizedRight[index]);
   }
 
   private toEntry(row: EntryRow): Entry {
