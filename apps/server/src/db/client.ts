@@ -24,15 +24,55 @@ const migration001 = `
   );
 `;
 
+const migration002 = `
+  CREATE VIRTUAL TABLE entry_search USING fts5(
+    entry_id UNINDEXED,
+    title,
+    body,
+    tags,
+    song_title,
+    song_artist,
+    song_album,
+    tokenize = 'trigram'
+  );
+`;
+
+const migration003 = `
+  ALTER TABLE entries ADD COLUMN edited_at TEXT;
+`;
+
 export function migrateDiaryDatabase(db: DiaryDatabase): void {
   db.pragma("foreign_keys = ON");
   const version = db.pragma("user_version", { simple: true }) as number;
-  if (version >= 1) return;
+  if (version < 1) {
+    db.transaction(() => {
+      db.exec(migration001);
+      db.pragma("user_version = 1");
+    })();
+  }
 
-  db.transaction(() => {
-    db.exec(migration001);
-    db.pragma("user_version = 1");
-  })();
+  if (version < 2) {
+    db.transaction(() => {
+      db.exec(migration002);
+      db.exec(`
+        INSERT INTO entry_search (entry_id, title, body, tags, song_title, song_artist, song_album)
+        SELECT entries.id, entries.title, entries.markdown,
+          COALESCE(group_concat(tags.name, ' '), ''), '', '', ''
+        FROM entries
+        LEFT JOIN entry_tags ON entry_tags.entry_id = entries.id
+        LEFT JOIN tags ON tags.id = entry_tags.tag_id
+        GROUP BY entries.id
+      `);
+      db.pragma("user_version = 2");
+    })();
+  }
+
+  if (version < 3) {
+    db.transaction(() => {
+      db.exec(migration003);
+      db.pragma("user_version = 3");
+    })();
+  }
 }
 
 export function createInMemoryDiaryDatabase(): DiaryDatabase {

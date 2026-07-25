@@ -11,6 +11,7 @@ type EntryRow = {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  edited_at: string | null;
 };
 
 export class EntryRepository {
@@ -46,25 +47,29 @@ export class EntryRepository {
 
   getDraft(): Entry | null {
     const row = this.db.prepare(`
-      SELECT id, title, markdown, state, published_at, created_at, updated_at, deleted_at
+      SELECT id, title, markdown, state, published_at, created_at, updated_at, deleted_at, edited_at
       FROM entries WHERE state = 'draft'
     `).get() as EntryRow | undefined;
     return row ? this.toEntry(row) : null;
   }
 
   publishDraft(id: string, publishedAt: string): Entry {
-    const now = new Date().toISOString();
-    this.db.prepare(`
-      UPDATE entries
-      SET state = 'published', published_at = ?, updated_at = ?
-      WHERE id = ? AND state = 'draft'
-    `).run(publishedAt, now, id);
-    return this.getById(id)!;
+    const publish = this.db.transaction(() => {
+      const result = this.db.prepare(`
+        UPDATE entries
+        SET state = 'published', published_at = ?, updated_at = ?, edited_at = NULL
+        WHERE id = ? AND state = 'draft'
+      `).run(publishedAt, new Date().toISOString(), id);
+      if (result.changes !== 1) throw new Error("Draft not found");
+      this.reindex(id);
+      return this.getById(id)!;
+    });
+    return publish();
   }
 
   listPublished(): Entry[] {
     const rows = this.db.prepare(`
-      SELECT id, title, markdown, state, published_at, created_at, updated_at, deleted_at
+      SELECT id, title, markdown, state, published_at, created_at, updated_at, deleted_at, edited_at
       FROM entries
       WHERE state = 'published'
       ORDER BY published_at DESC
@@ -78,10 +83,99 @@ export class EntryRepository {
     return result.count;
   }
 
+  updatePublished(id: string, input: DraftInput): Entry | null {
+    const value = draftInputSchema.parse(input);
+    const update = this.db.transaction(() => {
+      const before = this.getPublishedById(id);
+      if (!before) return null;
+      const now = new Date().toISOString();
+
+      this.db.prepare(`
+        UPDATE entries SET title = ?, markdown = ?, updated_at = ?, edited_at = ? WHERE id = ?
+      `).run(value.title, value.markdown, now, now, id);
+      this.replaceTags(id, value.tags);
+      this.reindex(id);
+
+      const after = this.getPublishedById(id)!;
+      if (after.publishedAt !== before.publishedAt) throw new Error("published_at changed");
+      return after;
+    });
+    return update();
+  }
+
+  trashPublished(id: string, deletedAt = new Date().toISOString()): Entry | null {
+    const timestamp = new Date(deletedAt).toISOString();
+    const trash = this.db.transaction(() => {
+      const result = this.db.prepare(`
+        UPDATE entries SET state = 'trashed', deleted_at = ?, updated_at = ?
+        WHERE id = ? AND state = 'published'
+      `).run(timestamp, timestamp, id);
+      return result.changes === 1 ? this.getById(id) : null;
+    });
+    return trash();
+  }
+
+  restoreTrashed(id: string): Entry | null {
+    const restore = this.db.transaction(() => {
+      const result = this.db.prepare(`
+        UPDATE entries SET state = 'published', deleted_at = NULL, updated_at = ?
+        WHERE id = ? AND state = 'trashed'
+      `).run(new Date().toISOString(), id);
+      return result.changes === 1 ? this.getById(id) : null;
+    });
+    return restore();
+  }
+
+  purgeTrashedBefore(cutoff: string): number {
+    const purge = this.db.transaction(() => {
+      const ids = this.db.prepare(`
+        SELECT id FROM entries
+        WHERE state = 'trashed' AND deleted_at <= ?
+      `).all(cutoff) as Array<{ id: string }>;
+      if (!ids.length) return 0;
+
+      const removeFromSearch = this.db.prepare("DELETE FROM entry_search WHERE entry_id = ?");
+      for (const { id } of ids) removeFromSearch.run(id);
+      return this.db.prepare(`
+        DELETE FROM entries WHERE state = 'trashed' AND deleted_at <= ?
+      `).run(cutoff).changes;
+    });
+    return purge();
+  }
+
+  searchPublished(query: string): Entry[] {
+    const text = query.trim();
+    if (!text) return [];
+    const useFts = Array.from(text).length >= 3;
+    const rows = this.db.prepare(`
+      SELECT entries.id, entries.title, entries.markdown, entries.state,
+        entries.published_at, entries.created_at, entries.updated_at, entries.deleted_at, entries.edited_at
+      FROM entries
+      INNER JOIN entry_search ON entry_search.entry_id = entries.id
+      WHERE entries.state = 'published' AND (
+        ${useFts
+          ? "entry_search MATCH ?"
+          : "entry_search.title LIKE ? OR entry_search.body LIKE ? OR entry_search.tags LIKE ? OR entry_search.song_title LIKE ? OR entry_search.song_artist LIKE ? OR entry_search.song_album LIKE ?"}
+      )
+      ORDER BY entries.published_at DESC
+    `).all(...(useFts
+      ? [this.ftsPhrase(text)]
+      : Array(6).fill(`%${text}%`))) as EntryRow[];
+    return rows.map((row) => this.toEntry(row));
+  }
+
   private getById(id: string): Entry | null {
     const row = this.db.prepare(`
-      SELECT id, title, markdown, state, published_at, created_at, updated_at, deleted_at
+      SELECT id, title, markdown, state, published_at, created_at, updated_at, deleted_at, edited_at
       FROM entries WHERE id = ?
+    `).get(id) as EntryRow | undefined;
+    return row ? this.toEntry(row) : null;
+  }
+
+  private getPublishedById(id: string): Entry | null {
+    const row = this.db.prepare(`
+      SELECT id, title, markdown, state, published_at, created_at, updated_at, deleted_at, edited_at
+      FROM entries WHERE id = ? AND state = 'published'
     `).get(id) as EntryRow | undefined;
     return row ? this.toEntry(row) : null;
   }
@@ -94,6 +188,21 @@ export class EntryRepository {
       const tag = this.db.prepare("SELECT id FROM tags WHERE name = ?").get(name) as { id: string };
       this.db.prepare("INSERT INTO entry_tags (entry_id, tag_id) VALUES (?, ?)").run(entryId, tag.id);
     }
+  }
+
+  private reindex(entryId: string): void {
+    const entry = this.getById(entryId);
+    if (!entry) return;
+
+    this.db.prepare("DELETE FROM entry_search WHERE entry_id = ?").run(entryId);
+    this.db.prepare(`
+      INSERT INTO entry_search (entry_id, title, body, tags, song_title, song_artist, song_album)
+      VALUES (?, ?, ?, ?, '', '', '')
+    `).run(entry.id, entry.title, entry.markdown, entry.tags.join(" "));
+  }
+
+  private ftsPhrase(query: string): string {
+    return `"${query.replaceAll('"', '""')}"`;
   }
 
   private toEntry(row: EntryRow): Entry {
@@ -112,6 +221,7 @@ export class EntryRepository {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       deletedAt: row.deleted_at,
+      edited: row.edited_at !== null,
       tags: tags.map((tag) => tag.name),
     };
   }

@@ -3,6 +3,7 @@ import { createDiaryDatabase, type DiaryDatabase } from "./db/client.js";
 import { EntryRepository } from "./entries/repository.js";
 import { registerEntryRoutes } from "./entries/routes.js";
 import { EntryService } from "./entries/service.js";
+import { registerSearchRoutes } from "./search/routes.js";
 import { createBeijingClock, type BeijingClock } from "./time/beijing.js";
 
 export type ServerOptions = {
@@ -14,13 +15,15 @@ export type ServerOptions = {
 export function buildServer(options: ServerOptions = {}) {
   const server = Fastify({ logger: false });
   const database = options.database ?? createDiaryDatabase(options.dataRoot ?? "data");
+  const entries = new EntryRepository(database);
   const service = new EntryService(
-    new EntryRepository(database),
+    entries,
     options.clock ?? createBeijingClock(),
   );
 
   server.get("/api/v1/health", async () => ({ status: "ok", apiVersion: 1 }));
-  void registerEntryRoutes(server, service);
+  void registerEntryRoutes(server, service, entries);
+  void registerSearchRoutes(server, entries);
   server.addHook("onClose", async () => database.close());
 
   return server;

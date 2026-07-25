@@ -18,5 +18,6 @@ export type Entry = {
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
+  edited: boolean;
   tags: string[];
 };
