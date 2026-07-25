@@ -31,6 +31,7 @@ export async function registerEntryRoutes(
     const entry = entries.trashPublished(request.params.id);
     return entry ? reply.code(204).send() : reply.code(404).send();
   });
+  server.get("/api/v1/trash", async () => ({ items: entries.listTrashed() }));
   server.post<{ Params: { id: string } }>("/api/v1/trash/:id/restore", async (request, reply) => {
     const entry = entries.restoreTrashed(request.params.id);
     return entry ? reply.send(entry) : reply.code(404).send();

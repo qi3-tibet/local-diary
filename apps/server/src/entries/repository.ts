@@ -77,6 +77,16 @@ export class EntryRepository {
     return rows.map((row) => this.toEntry(row));
   }
 
+  listTrashed(): Entry[] {
+    const rows = this.db.prepare(`
+      SELECT id, title, markdown, state, published_at, created_at, updated_at, deleted_at, edited_at
+      FROM entries
+      WHERE state = 'trashed'
+      ORDER BY deleted_at DESC
+    `).all() as EntryRow[];
+    return rows.map((row) => this.toEntry(row));
+  }
+
   countByState(state: Entry["state"]): number {
     const result = this.db.prepare("SELECT COUNT(*) AS count FROM entries WHERE state = ?")
       .get(state) as { count: number };

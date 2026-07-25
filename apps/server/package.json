@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "start:e2e": "tsx src/e2e.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

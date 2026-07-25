@@ -6,9 +6,16 @@ import { formatEnglishDayMeta, groupEntriesByBeijingDay } from "./date-groups";
 type TimelineProps = {
   entries: Entry[];
   onActiveDayChange?: (day: string) => void;
+  onEditEntry?: (entry: Entry) => void;
+  onTrashEntry?: (entry: Entry) => void;
 };
 
-export function Timeline({ entries, onActiveDayChange }: TimelineProps) {
+export function Timeline({
+  entries,
+  onActiveDayChange,
+  onEditEntry,
+  onTrashEntry,
+}: TimelineProps) {
   const groups = groupEntriesByBeijingDay(entries);
   const observedDays = groups.map(({ day }) => day).join("|");
   const timelineRef = useRef<HTMLElement>(null);
@@ -52,7 +59,12 @@ export function Timeline({ entries, onActiveDayChange }: TimelineProps) {
             <span>{formatEnglishDayMeta(day, dayEntries.length)}</span>
           </header>
           {dayEntries.map((entry) => (
-            <EntryBody entry={entry} key={entry.id} />
+            <EntryBody
+              entry={entry}
+              key={entry.id}
+              onEdit={onEditEntry}
+              onTrash={onTrashEntry}
+            />
           ))}
         </section>
       ))}

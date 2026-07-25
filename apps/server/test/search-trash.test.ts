@@ -104,6 +104,15 @@ describe("search, editing, and trash", () => {
     const deleted = await server.inject({ method: "DELETE", url: `/api/v1/entries/${entry.id}` });
     expect(deleted.statusCode).toBe(204);
 
+    const trash = await server.inject({ method: "GET", url: "/api/v1/trash" });
+    expect(trash.statusCode).toBe(200);
+    expect(trash.json().items).toEqual([
+      expect.objectContaining({
+        id: entry.id,
+        state: "trashed",
+      }),
+    ]);
+
     const restored = await server.inject({
       method: "POST",
       url: `/api/v1/trash/${entry.id}/restore`,
@@ -115,6 +124,9 @@ describe("search, editing, and trash", () => {
       deletedAt: null,
       edited: false,
     });
+
+    const emptiedTrash = await server.inject({ method: "GET", url: "/api/v1/trash" });
+    expect(emptiedTrash.json().items).toEqual([]);
   });
 
   it("purges an entry at the exact 30-day trash boundary", async () => {
