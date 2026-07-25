@@ -167,7 +167,7 @@ Provider-specific APIs are isolated behind adapters so a provider can be replace
 - Updated entries receive the index-only `EDITED` marker.
 - Deleting moves an entry and its exclusive media references to trash.
 - Trashed entries can be restored for 30 days.
-- After 30 days, a scheduled local cleanup permanently deletes the entry and media no longer referenced elsewhere.
+- At service startup and once per day while it remains running, local cleanup permanently deletes entries that have spent 30 days in trash and removes media no longer referenced elsewhere.
 
 ### 5.4 Music playback
 
@@ -205,10 +205,10 @@ The default follows the Windows theme. A manual override is available and rememb
 ### 6.3 Typography and language
 
 - All interface copy is English.
-- English interface text, dates, numbers, buttons, statuses, and navigation use **Georgia**.
+- English interface text, dates, numbers, buttons, statuses, and navigation use the Windows system **Georgia** font, with a system serif fallback if Georgia is unavailable.
 - Chinese may appear only in diary bodies, diary titles in indexes/search, and music-related metadata.
-- All Chinese text uses the same packaged Chinese serif family as the diary body.
-- The packaged application includes the required font assets and does not depend on remote font loading.
+- All Chinese text uses the same packaged, redistributable Chinese serif family as the diary body.
+- The application does not depend on remote font loading and does not redistribute Georgia.
 
 ### 6.4 Symbols
 
