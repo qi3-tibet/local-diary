@@ -1,0 +1,387 @@
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 24px;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: var(--paper);
+}
+
+button,
+a {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--ochre);
+  outline-offset: 3px;
+}
+
+.app-shell {
+  min-height: 100vh;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--ui-font);
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.app-main {
+  min-height: 100vh;
+  margin-left: 88px;
+}
+
+.date-rail {
+  position: fixed;
+  z-index: 10;
+  inset: 0 auto 0 0;
+  display: flex;
+  width: 88px;
+  flex-direction: column;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  color: var(--muted);
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease;
+}
+
+.date-list {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.date-link {
+  position: relative;
+  display: flex;
+  min-height: 82px;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 1px solid var(--line);
+  color: inherit;
+  text-decoration: none;
+}
+
+.date-link::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: transparent;
+  content: "";
+}
+
+.date-link[aria-current="date"] {
+  color: var(--ink);
+}
+
+.date-link[aria-current="date"]::before {
+  background: var(--ochre);
+}
+
+.date-month {
+  font-size: 0.625rem;
+  letter-spacing: 0.15em;
+  line-height: 1;
+}
+
+.date-number {
+  margin-top: 5px;
+  font-size: 1.55rem;
+  font-variant-numeric: lining-nums tabular-nums;
+  line-height: 1;
+}
+
+.theme-control {
+  display: flex;
+  min-height: 76px;
+  flex: 0 0 auto;
+  cursor: pointer;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 4px;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--line);
+  font-size: 0.57rem;
+  letter-spacing: 0.12em;
+}
+
+.theme-mark {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  overflow: hidden;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+}
+
+.theme-mark::before {
+  position: absolute;
+  inset: 0 50% 0 0;
+  background: currentColor;
+  content: "";
+}
+
+.reading-page {
+  width: min(610px, calc(100vw - 180px));
+  margin: 0 auto;
+  padding: 54px 0 120px;
+}
+
+.reading-page-empty,
+.reading-status {
+  display: grid;
+  min-height: 100vh;
+  place-content: center;
+  margin: 0;
+  color: var(--muted);
+  font-family: var(--ui-font);
+  font-size: 0.68rem;
+  letter-spacing: 0.16em;
+}
+
+.reading-status button {
+  margin: 18px auto 0;
+  padding: 8px 0 4px;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--ochre);
+  color: var(--ink);
+  letter-spacing: 0.12em;
+}
+
+.day {
+  scroll-margin-top: 24px;
+}
+
+.day + .day {
+  margin-top: 102px;
+}
+
+.day-heading {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  align-items: end;
+  padding-bottom: 17px;
+  border-bottom: 1px solid var(--line);
+}
+
+.day-heading strong {
+  font-size: 3.25rem;
+  font-weight: 400;
+  font-variant-numeric: lining-nums tabular-nums;
+  letter-spacing: -0.045em;
+  line-height: 0.8;
+}
+
+.day-heading span {
+  padding-bottom: 1px;
+  color: var(--muted);
+  font-size: 0.65rem;
+  letter-spacing: 0.14em;
+  line-height: 1.5;
+}
+
+.entry {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  padding-top: 36px;
+}
+
+.entry + .entry {
+  margin-top: 46px;
+  padding-top: 47px;
+  border-top: 1px solid color-mix(in srgb, var(--line), transparent 35%);
+}
+
+.entry-time {
+  padding-top: 0.52em;
+  color: var(--muted);
+  font-family: var(--ui-font);
+  font-size: 0.68rem;
+  font-variant-numeric: lining-nums tabular-nums;
+  letter-spacing: 0.08em;
+}
+
+.entry-body {
+  min-width: 0;
+  font-family: var(--body-cn-font);
+  font-size: 1rem;
+  line-height: 2.08;
+  overflow-wrap: anywhere;
+}
+
+.entry-body > :first-child {
+  margin-top: 0;
+}
+
+.entry-body > :last-child {
+  margin-bottom: 0;
+}
+
+.entry-body p {
+  margin: 0 0 1.25em;
+}
+
+.entry-body h1,
+.entry-body h2,
+.entry-body h3 {
+  margin: 1.7em 0 0.65em;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.entry-body blockquote {
+  margin: 1.5em 0;
+  padding-left: 1.25em;
+  border-left: 1px solid var(--ochre);
+  color: var(--muted);
+}
+
+.entry-body a {
+  color: inherit;
+  text-decoration-color: var(--ochre);
+  text-underline-offset: 0.2em;
+}
+
+.entry-body code {
+  font-size: 0.9em;
+}
+
+@media (max-width: 720px) {
+  html {
+    scroll-padding-top: 82px;
+  }
+
+  .app-main {
+    margin-left: 0;
+  }
+
+  .date-rail {
+    inset: 0 0 auto;
+    width: auto;
+    height: 58px;
+    flex-direction: row;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .date-list {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .date-link {
+    width: 68px;
+    min-height: 57px;
+    border-right: 1px solid var(--line);
+    border-bottom: 0;
+  }
+
+  .date-link::before {
+    inset: auto 0 0;
+    width: auto;
+    height: 2px;
+  }
+
+  .date-month {
+    font-size: 0.55rem;
+  }
+
+  .date-number {
+    margin-top: 3px;
+    font-size: 1.2rem;
+  }
+
+  .theme-control {
+    width: 70px;
+    min-height: 57px;
+    flex-direction: row;
+    gap: 6px;
+    border-top: 0;
+    border-left: 1px solid var(--line);
+    font-size: 0.52rem;
+  }
+
+  .theme-mark {
+    width: 12px;
+    height: 12px;
+  }
+
+  .reading-page {
+    width: min(calc(100% - 32px), 610px);
+    padding: 94px 0 80px;
+  }
+
+  .reading-status {
+    padding-top: 58px;
+  }
+
+  .day {
+    scroll-margin-top: 80px;
+  }
+
+  .day + .day {
+    margin-top: 76px;
+  }
+
+  .day-heading,
+  .entry {
+    grid-template-columns: 54px minmax(0, 1fr);
+  }
+
+  .day-heading strong {
+    font-size: 2.65rem;
+  }
+
+  .day-heading span {
+    font-size: 0.57rem;
+    letter-spacing: 0.1em;
+  }
+
+  .entry {
+    padding-top: 29px;
+  }
+
+  .entry + .entry {
+    margin-top: 37px;
+    padding-top: 38px;
+  }
+
+  .entry-time {
+    font-size: 0.61rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .app-shell,
+  .date-rail {
+    transition: none;
+  }
+}
