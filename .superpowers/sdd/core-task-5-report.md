@@ -67,3 +67,36 @@ persistence/system following/cycling, and direct API contract consumption/error 
 ## Concerns
 
 None blocking. The current shared contract provides TypeScript typing but no runtime `Entry[]` schema, so the web client intentionally performs no shape adaptation or runtime transformation.
+
+## Reviewer Follow-up — 2026-07-26
+
+All three Core Task 5 review findings were addressed:
+
+- Added a synchronous inline head bootstrap that resolves remembered `light | dark` or
+  the current system preference and applies both `data-theme` and `color-scheme` before
+  the React module loads. The Zustand store remains the runtime source of truth and
+  continues to synchronize later preference changes.
+- Expanded the timeline observer coverage to capture and invoke the real observer
+  callback. The test drives simultaneous visible records and an entry/exit transition,
+  asserting that the nearest intersecting day is reported.
+- Replaced the cumulative mobile `82px` document plus `80px` section offsets with one
+  `64px` document scroll-padding offset for the fixed `58px` horizontal date strip.
+  Section scroll margins were removed.
+
+Fresh RED evidence:
+
+```text
+3 affected test files
+3 failed, 9 passed
+```
+
+The two dark first-paint cases failed because the bootstrap script was missing. The
+responsive CSS case failed because `scroll-padding-top: 64px` was absent and section
+scroll margins were still present. The new callback-driven observer test passed against
+the existing selection algorithm.
+
+Fresh GREEN verification after the fixes:
+
+- `pnpm vitest run apps/web/src/theme/theme-store.test.ts apps/web/src/diary/Timeline.test.tsx apps/web/src/styles/app.test.ts` — pass, 3 files and 12/12 tests.
+- `pnpm --filter @diary/web build` — pass with Vite 8.1.5; 231 modules transformed.
+- `pnpm typecheck` — pass across contracts, test support, server, and web.

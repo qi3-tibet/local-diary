@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import indexHtml from "../../index.html?raw";
 import { createThemeStore } from "./theme-store";
 
 function fakeStorage(initial?: string) {
@@ -15,7 +16,36 @@ function fakeStorage(initial?: string) {
   };
 }
 
+function runThemeBootstrap(remembered: string | null, systemDark: boolean) {
+  const script = indexHtml.match(
+    /<script data-theme-bootstrap>([\s\S]*?)<\/script>/,
+  )?.[1];
+  if (!script) throw new Error("Theme bootstrap script is missing.");
+
+  const documentElement = {
+    dataset: {} as Record<string, string>,
+    style: { colorScheme: "" },
+  };
+  const bootstrapWindow = {
+    localStorage: { getItem: () => remembered },
+    matchMedia: () => ({ matches: systemDark }),
+  };
+
+  Function("window", "document", script)(bootstrapWindow, { documentElement });
+  return documentElement;
+}
+
 describe("theme store", () => {
+  it.each([
+    ["remembered dark", "dark", false],
+    ["system dark", "system", true],
+  ] as const)("applies %s before React starts", (_case, remembered, systemDark) => {
+    const documentElement = runThemeBootstrap(remembered, systemDark);
+
+    expect(documentElement.dataset.theme).toBe("dark");
+    expect(documentElement.style.colorScheme).toBe("dark");
+  });
+
   it("follows Windows until a remembered override is selected", () => {
     const storage = fakeStorage();
     const store = createThemeStore(storage, () => true);

@@ -107,6 +107,53 @@ describe("Timeline", () => {
     expect(disconnect).toHaveBeenCalledOnce();
     expect(observedDays).toEqual(["2026-07-26", "2026-07-25"]);
   });
+
+  it("reports the nearest visible day when sections enter and leave the viewport", () => {
+    let observerCallback: IntersectionObserverCallback | undefined;
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          observerCallback = callback;
+        }
+
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const onActiveDayChange = vi.fn();
+    render(<Timeline entries={entriesForTwoDays} onActiveDayChange={onActiveDayChange} />);
+    const july26 = screen.getByTestId("day-2026-07-26");
+    const july25 = screen.getByTestId("day-2026-07-25");
+    const observation = (
+      target: Element,
+      isIntersecting: boolean,
+      top: number,
+    ) =>
+      ({
+        target,
+        isIntersecting,
+        boundingClientRect: { top },
+      }) as IntersectionObserverEntry;
+
+    observerCallback?.(
+      [
+        observation(july26, true, 180),
+        observation(july25, true, 42),
+      ],
+      {} as IntersectionObserver,
+    );
+    expect(onActiveDayChange).toHaveBeenLastCalledWith("2026-07-25");
+
+    observerCallback?.(
+      [
+        observation(july26, true, -18),
+        observation(july25, false, 4),
+      ],
+      {} as IntersectionObserver,
+    );
+    expect(onActiveDayChange).toHaveBeenLastCalledWith("2026-07-26");
+  });
 });
 
 describe("DateRail", () => {

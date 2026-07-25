@@ -171,10 +171,6 @@ a:focus-visible {
   letter-spacing: 0.12em;
 }
 
-.day {
-  scroll-margin-top: 24px;
-}
-
 .day + .day {
   margin-top: 102px;
 }
@@ -271,7 +267,7 @@ a:focus-visible {
 
 @media (max-width: 720px) {
   html {
-    scroll-padding-top: 82px;
+    scroll-padding-top: 64px;
   }
 
   .app-main {
@@ -337,10 +333,6 @@ a:focus-visible {
 
   .reading-status {
     padding-top: 58px;
-  }
-
-  .day {
-    scroll-margin-top: 80px;
   }
 
   .day + .day {
