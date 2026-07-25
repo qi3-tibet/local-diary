@@ -52,6 +52,26 @@ export class EntryRepository {
     return row ? this.toEntry(row) : null;
   }
 
+  publishDraft(id: string, publishedAt: string): Entry {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE entries
+      SET state = 'published', published_at = ?, updated_at = ?
+      WHERE id = ? AND state = 'draft'
+    `).run(publishedAt, now, id);
+    return this.getById(id)!;
+  }
+
+  listPublished(): Entry[] {
+    const rows = this.db.prepare(`
+      SELECT id, title, markdown, state, published_at, created_at, updated_at, deleted_at
+      FROM entries
+      WHERE state = 'published'
+      ORDER BY published_at DESC
+    `).all() as EntryRow[];
+    return rows.map((row) => this.toEntry(row));
+  }
+
   countByState(state: Entry["state"]): number {
     const result = this.db.prepare("SELECT COUNT(*) AS count FROM entries WHERE state = ?")
       .get(state) as { count: number };
