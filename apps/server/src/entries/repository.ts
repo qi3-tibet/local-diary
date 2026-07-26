@@ -210,10 +210,21 @@ export class EntryRepository {
     if (!entry) return;
 
     this.db.prepare("DELETE FROM entry_search WHERE entry_id = ?").run(entryId);
+    const music = this.db.prepare(`
+      SELECT title, artist, album FROM entry_music WHERE entry_id = ?
+    `).get(entryId) as { title: string | null; artist: string | null; album: string | null } | undefined;
     this.db.prepare(`
       INSERT INTO entry_search (entry_id, title, body, tags, song_title, song_artist, song_album)
-      VALUES (?, ?, ?, ?, '', '', '')
-    `).run(entry.id, entry.title, entry.markdown, entry.tags.join(" "));
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      entry.id,
+      entry.title,
+      entry.markdown,
+      entry.tags.join(" "),
+      music?.title ?? "",
+      music?.artist ?? "",
+      music?.album ?? "",
+    );
   }
 
   private ftsPhrase(query: string): string {

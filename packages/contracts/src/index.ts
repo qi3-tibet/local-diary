@@ -21,3 +21,16 @@ export type Entry = {
   edited: boolean;
   tags: string[];
 };
+
+export const musicMetadataSchema = z.object({
+  mediaId: z.string().uuid(),
+  title: z.string().nullable(),
+  artist: z.string().nullable(),
+  album: z.string().nullable(),
+  year: z.number().int().nullable(),
+  coverMediaId: z.string().uuid().nullable(),
+  coverMime: z.string().nullable(),
+  recognitionStatus: z.enum(["embedded", "manual_required"]),
+});
+
+export type MusicMetadata = z.infer<typeof musicMetadataSchema>;

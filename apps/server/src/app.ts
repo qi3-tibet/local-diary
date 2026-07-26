@@ -9,6 +9,8 @@ import { createBeijingClock, type BeijingClock } from "./time/beijing.js";
 import { ImageService } from "./media/images.js";
 import { registerMediaRoutes } from "./media/routes.js";
 import { MediaStore } from "./media/store.js";
+import { MusicService } from "./music/service.js";
+import { registerMusicRoutes } from "./music/routes.js";
 import path from "node:path";
 
 export type ServerOptions = {
@@ -26,13 +28,16 @@ export function buildServer(options: ServerOptions = {}) {
     entries,
     options.clock ?? createBeijingClock(),
   );
-  const images = new ImageService(database, new MediaStore(path.join(dataRoot, "media")));
+  const mediaStore = new MediaStore(path.join(dataRoot, "media"));
+  const images = new ImageService(database, mediaStore);
+  const music = new MusicService(database, mediaStore);
 
   server.get("/api/v1/health", async () => ({ status: "ok", apiVersion: 1 }));
   void server.register(multipart);
   void registerEntryRoutes(server, service, entries);
   void registerSearchRoutes(server, entries);
   void registerMediaRoutes(server, images);
+  void registerMusicRoutes(server, music);
   server.addHook("onClose", async () => database.close());
 
   return server;

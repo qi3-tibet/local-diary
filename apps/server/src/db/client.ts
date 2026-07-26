@@ -58,6 +58,20 @@ const migration004 = `
   CREATE INDEX media_entry_id ON media(entry_id);
 `;
 
+const migration005 = `
+  CREATE TABLE entry_music (
+    entry_id TEXT PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+    media_id TEXT NOT NULL UNIQUE REFERENCES media(id) ON DELETE RESTRICT,
+    title TEXT,
+    artist TEXT,
+    album TEXT,
+    year INTEGER,
+    cover_media_id TEXT REFERENCES media(id) ON DELETE RESTRICT,
+    recognition_status TEXT NOT NULL,
+    user_overrides_json TEXT NOT NULL DEFAULT '{}'
+  );
+`;
+
 export function migrateDiaryDatabase(db: DiaryDatabase): void {
   db.pragma("foreign_keys = ON");
   const version = db.pragma("user_version", { simple: true }) as number;
@@ -95,6 +109,13 @@ export function migrateDiaryDatabase(db: DiaryDatabase): void {
     db.transaction(() => {
       db.exec(migration004);
       db.pragma("user_version = 4");
+    })();
+  }
+
+  if (version < 5) {
+    db.transaction(() => {
+      db.exec(migration005);
+      db.pragma("user_version = 5");
     })();
   }
 }
