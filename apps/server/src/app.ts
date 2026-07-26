@@ -11,6 +11,10 @@ import { registerMediaRoutes } from "./media/routes.js";
 import { MediaStore } from "./media/store.js";
 import { MusicService } from "./music/service.js";
 import { registerMusicRoutes } from "./music/routes.js";
+import { createAcoustIdFingerprintLookup } from "./music/recognition/fingerprint.js";
+import { MusicRecognitionService } from "./music/recognition/service.js";
+import { createMusicBrainzTextLookup } from "./music/recognition/text-lookup.js";
+import type { FingerprintLookup, TextLookup } from "./music/recognition/types.js";
 import path from "node:path";
 
 export type ServerOptions = {
@@ -18,6 +22,10 @@ export type ServerOptions = {
   database?: DiaryDatabase;
   clock?: BeijingClock;
   musicUploadLimit?: number;
+  musicRecognition?: {
+    textLookup?: TextLookup;
+    fingerprintLookup?: FingerprintLookup;
+  };
 };
 
 export function buildServer(options: ServerOptions = {}) {
@@ -32,13 +40,19 @@ export function buildServer(options: ServerOptions = {}) {
   const mediaStore = new MediaStore(path.join(dataRoot, "media"));
   const images = new ImageService(database, mediaStore);
   const music = new MusicService(database, mediaStore);
+  const recognition = new MusicRecognitionService(
+    database,
+    mediaStore,
+    options.musicRecognition?.textLookup ?? createMusicBrainzTextLookup(),
+    options.musicRecognition?.fingerprintLookup ?? createAcoustIdFingerprintLookup(),
+  );
 
   server.get("/api/v1/health", async () => ({ status: "ok", apiVersion: 1 }));
   void server.register(multipart);
   void registerEntryRoutes(server, service, entries);
   void registerSearchRoutes(server, entries);
   void registerMediaRoutes(server, images);
-  void registerMusicRoutes(server, music, options.musicUploadLimit);
+  void registerMusicRoutes(server, music, recognition, options.musicUploadLimit);
   server.addHook("onClose", async () => database.close());
 
   return server;

@@ -29,7 +29,7 @@ export class MusicService {
     private readonly store: MediaStore,
   ) {}
 
-  async attach(entryId: string, bytes: Buffer): Promise<AttachedMusic> {
+  async attach(entryId: string, bytes: Buffer, filename = "track.mp3"): Promise<AttachedMusic> {
     this.assertAttachableEntry(entryId);
     if (!(await isMp3Container(bytes))) throw new MusicValidationError("Uploaded bytes are not a valid MP3");
 
@@ -48,7 +48,10 @@ export class MusicService {
       }
     }
     const hashes = [this.store.hash(bytes), ...(cover ? [this.store.hash(cover.bytes)] : [])];
-    return this.store.withObjectLocks(hashes, async () => this.persist(entryId, bytes, metadata, cover));
+    return this.store.withObjectLocks(
+      hashes,
+      async () => this.persist(entryId, bytes, metadata, cover, normalizeFilename(filename)),
+    );
   }
 
   private assertAttachableEntry(entryId: string): void {
@@ -61,6 +64,7 @@ export class MusicService {
     bytes: Buffer,
     metadata: MusicMetadata,
     cover: { bytes: Buffer; mime: string; extension: string } | null,
+    filename: string,
   ): Promise<AttachedMusic> {
     const original = await this.store.put(bytes, "mp3");
     let coverStored: StoredMedia | null = null;
@@ -86,9 +90,22 @@ export class MusicService {
             `).run(coverId, entryId, coverStored.hash, cover.mime, cover.extension, now, now);
           }
           this.database.prepare(`
-            INSERT INTO entry_music (entry_id, media_id, title, artist, album, year, cover_media_id, recognition_status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(entryId, musicId, metadata.title, metadata.artist, metadata.album, metadata.year, coverId, metadata.recognitionStatus);
+            INSERT INTO entry_music (
+              entry_id, media_id, title, artist, album, year, cover_media_id,
+              recognition_status, original_filename
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            entryId,
+            musicId,
+            metadata.title,
+            metadata.artist,
+            metadata.album,
+            metadata.year,
+            coverId,
+            metadata.recognitionStatus,
+            filename,
+          );
           this.database.prepare(`
             UPDATE entry_search SET song_title = ?, song_artist = ?, song_album = ? WHERE entry_id = ?
           `).run(metadata.title ?? "", metadata.artist ?? "", metadata.album ?? "", entryId);
@@ -122,6 +139,15 @@ export class MusicService {
       if (!referenced) await this.store.remove(object.path);
     }));
   }
+}
+
+function normalizeFilename(filename: string): string {
+  const normalized = filename
+    .replaceAll("\0", "")
+    .replace(/^.*[\\/]/, "")
+    .trim()
+    .slice(0, 255);
+  return normalized || "track.mp3";
 }
 
 function coverExtension(mime: string): string | null {

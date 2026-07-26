@@ -72,6 +72,13 @@ const migration005 = `
   );
 `;
 
+const migration006 = `
+  ALTER TABLE entry_music ADD COLUMN original_filename TEXT NOT NULL DEFAULT 'track.mp3';
+  ALTER TABLE entry_music ADD COLUMN recognition_candidates_json TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE entry_music ADD COLUMN recognition_source TEXT;
+  ALTER TABLE entry_music ADD COLUMN selected_candidate_id TEXT;
+`;
+
 export function migrateDiaryDatabase(db: DiaryDatabase): void {
   db.pragma("foreign_keys = ON");
   const version = db.pragma("user_version", { simple: true }) as number;
@@ -116,6 +123,13 @@ export function migrateDiaryDatabase(db: DiaryDatabase): void {
     db.transaction(() => {
       db.exec(migration005);
       db.pragma("user_version = 5");
+    })();
+  }
+
+  if (version < 6) {
+    db.transaction(() => {
+      db.exec(migration006);
+      db.pragma("user_version = 6");
     })();
   }
 }

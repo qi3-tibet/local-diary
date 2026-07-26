@@ -211,8 +211,14 @@ export class EntryRepository {
 
     this.db.prepare("DELETE FROM entry_search WHERE entry_id = ?").run(entryId);
     const music = this.db.prepare(`
-      SELECT title, artist, album FROM entry_music WHERE entry_id = ?
-    `).get(entryId) as { title: string | null; artist: string | null; album: string | null } | undefined;
+      SELECT title, artist, album, user_overrides_json FROM entry_music WHERE entry_id = ?
+    `).get(entryId) as {
+      title: string | null;
+      artist: string | null;
+      album: string | null;
+      user_overrides_json: string;
+    } | undefined;
+    const overrides = music ? parseMusicOverrides(music.user_overrides_json) : {};
     this.db.prepare(`
       INSERT INTO entry_search (entry_id, title, body, tags, song_title, song_artist, song_album)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -221,9 +227,9 @@ export class EntryRepository {
       entry.title,
       entry.markdown,
       entry.tags.join(" "),
-      music?.title ?? "",
-      music?.artist ?? "",
-      music?.album ?? "",
+      musicSearchValue(overrides, "title", music?.title),
+      musicSearchValue(overrides, "artist", music?.artist),
+      musicSearchValue(overrides, "album", music?.album),
     );
   }
 
@@ -259,4 +265,33 @@ export class EntryRepository {
       tags: tags.map((tag) => tag.name),
     };
   }
+}
+
+function parseMusicOverrides(value: string): {
+  title?: string | null;
+  artist?: string | null;
+  album?: string | null;
+} {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (typeof parsed !== "object" || parsed === null) return {};
+    const record = parsed as Record<string, unknown>;
+    const overrides: { title?: string | null; artist?: string | null; album?: string | null } = {};
+    for (const key of ["title", "artist", "album"] as const) {
+      if (record[key] === null || typeof record[key] === "string") overrides[key] = record[key];
+    }
+    return overrides;
+  } catch {
+    return {};
+  }
+}
+
+function musicSearchValue(
+  overrides: { title?: string | null; artist?: string | null; album?: string | null },
+  key: "title" | "artist" | "album",
+  base: string | null | undefined,
+): string {
+  return Object.prototype.hasOwnProperty.call(overrides, key)
+    ? overrides[key] ?? ""
+    : base ?? "";
 }

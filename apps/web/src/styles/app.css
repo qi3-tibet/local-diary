@@ -56,6 +56,8 @@ a:focus-visible {
 .entry-actions button,
 .editor-actions button,
 .management-actions button,
+.music-candidate button,
+.music-metadata-actions button,
 .management-title {
   padding: 5px 0 3px;
   cursor: pointer;
@@ -72,6 +74,8 @@ a:focus-visible {
 .entry-actions button:hover,
 .editor-actions button:hover,
 .management-actions button:hover,
+.music-candidate button:hover,
+.music-metadata-actions button:hover,
 .management-title:hover {
   border-bottom-color: var(--ochre);
   color: var(--ink);
@@ -505,6 +509,105 @@ a:focus-visible {
 }
 
 .editor-actions button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.music-metadata-editor {
+  display: grid;
+  gap: 24px;
+  padding: 22px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--ui-font);
+}
+
+.music-metadata-heading,
+.music-metadata-status {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 0.58rem;
+  letter-spacing: 0.14em;
+}
+
+.music-metadata-status {
+  color: var(--ochre);
+}
+
+.music-candidates,
+.music-metadata-form {
+  display: grid;
+  gap: 16px;
+}
+
+.music-candidate {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.music-candidate-copy {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  color: var(--muted);
+  font-family: var(--body-cn-font);
+  font-size: 0.8rem;
+}
+
+.music-candidate-copy strong {
+  width: 100%;
+  color: var(--ink);
+  font-weight: 400;
+}
+
+.music-metadata-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.music-metadata-form label {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.55rem;
+  letter-spacing: 0.13em;
+}
+
+.music-metadata-form input {
+  min-width: 0;
+  padding: 7px 0;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--ink);
+  font-family: var(--body-cn-font);
+  font-size: 0.95rem;
+  outline: 0;
+}
+
+.music-metadata-form input:focus {
+  border-bottom-color: var(--ochre);
+}
+
+.music-metadata-actions {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  gap: 22px;
+}
+
+.music-metadata-actions button:last-child {
+  border-bottom-color: var(--ochre);
+}
+
+.music-metadata-actions button:disabled,
+.music-candidate button:disabled {
   cursor: wait;
   opacity: 0.55;
 }

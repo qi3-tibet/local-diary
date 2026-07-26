@@ -30,7 +30,31 @@ export const musicMetadataSchema = z.object({
   year: z.number().int().nullable(),
   coverMediaId: z.string().uuid().nullable(),
   coverMime: z.string().nullable(),
-  recognitionStatus: z.enum(["embedded", "manual_required"]),
+  recognitionStatus: z.enum(["embedded", "manual_required", "candidates", "recognized", "manual"]),
 });
 
 export type MusicMetadata = z.infer<typeof musicMetadataSchema>;
+
+export const recognitionCandidateSchema = z.object({
+  id: z.string().min(1).max(200),
+  title: z.string().nullable(),
+  artist: z.string().nullable(),
+  album: z.string().nullable(),
+  year: z.number().int().min(1000).max(9999).nullable(),
+  coverMediaId: z.string().uuid().nullable(),
+  coverReleaseId: z.string().uuid().nullable(),
+  score: z.number().min(0).max(1),
+  source: z.enum(["text", "fingerprint"]),
+});
+
+export type RecognitionCandidate = z.infer<typeof recognitionCandidateSchema>;
+
+export const musicMetadataOverrideSchema = z.object({
+  title: z.string().trim().max(500).nullable().optional(),
+  artist: z.string().trim().max(500).nullable().optional(),
+  album: z.string().trim().max(500).nullable().optional(),
+  year: z.number().int().min(1000).max(9999).nullable().optional(),
+  coverMediaId: z.string().uuid().nullable().optional(),
+}).strict();
+
+export type MusicMetadataOverride = z.infer<typeof musicMetadataOverrideSchema>;
