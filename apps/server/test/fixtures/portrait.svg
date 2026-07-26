@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="3200" viewBox="0 0 2400 3200">
+  <defs>
+    <linearGradient id="sky" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#8dc7eb"/>
+      <stop offset="1" stop-color="#f7d8a8"/>
+    </linearGradient>
+  </defs>
+  <rect width="2400" height="3200" fill="url(#sky)"/>
+  <circle cx="1800" cy="700" r="280" fill="#fff4c7"/>
+  <path d="M0 2500 C500 2100 900 2800 1400 2400 S2100 2300 2400 2500 V3200 H0Z" fill="#4f7a67"/>
+  <path d="M0 2780 C450 2500 1000 3100 1550 2680 S2100 2600 2400 2750 V3200 H0Z" fill="#294a45"/>
+  <rect x="480" y="1300" width="1440" height="820" rx="80" fill="#fffaf0" opacity="0.82"/>
+  <text x="1200" y="1700" text-anchor="middle" font-family="serif" font-size="180" fill="#294a45">Local diary</text>
+</svg>

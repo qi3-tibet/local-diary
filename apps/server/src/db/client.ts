@@ -41,6 +41,23 @@ const migration003 = `
   ALTER TABLE entries ADD COLUMN edited_at TEXT;
 `;
 
+const migration004 = `
+  CREATE TABLE media (
+    id TEXT PRIMARY KEY,
+    entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+    original_hash TEXT NOT NULL,
+    original_mime TEXT NOT NULL,
+    original_extension TEXT NOT NULL,
+    display_hash TEXT,
+    thumbnail_hash TEXT,
+    derivative_status TEXT NOT NULL CHECK (derivative_status IN ('pending', 'ready', 'failed')),
+    derivative_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX media_entry_id ON media(entry_id);
+`;
+
 export function migrateDiaryDatabase(db: DiaryDatabase): void {
   db.pragma("foreign_keys = ON");
   const version = db.pragma("user_version", { simple: true }) as number;
@@ -71,6 +88,13 @@ export function migrateDiaryDatabase(db: DiaryDatabase): void {
     db.transaction(() => {
       db.exec(migration003);
       db.pragma("user_version = 3");
+    })();
+  }
+
+  if (version < 4) {
+    db.transaction(() => {
+      db.exec(migration004);
+      db.pragma("user_version = 4");
     })();
   }
 }
