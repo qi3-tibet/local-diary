@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { lstat, mkdir, readFile, rename, rm } from "node:fs/promises";
+import { link, lstat, mkdir, readFile, rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import CRC32 from "crc-32";
@@ -34,7 +34,15 @@ export async function exportArchive(snapshotId: string, snapshots: SnapshotServi
     }
     zip.end();
     await pipeline(zip.outputStream, createWriteStream(temporary, { flags: "wx" }));
-    await rename(temporary, target);
+    try {
+      // `rename` replaces an existing target on both POSIX and Windows.  A hard
+      // link is an atomic, same-volume no-clobber publication instead.
+      await link(temporary, target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error("ARCHIVE_OUTPUT_EXISTS");
+      throw error;
+    }
+    await rm(temporary, { force: true });
   } catch (error) {
     await rm(temporary, { force: true });
     throw error;
