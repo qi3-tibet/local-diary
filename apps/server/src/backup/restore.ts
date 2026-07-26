@@ -3,6 +3,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { SnapshotManifest } from "@diary/contracts";
 import { extractAndValidateArchive } from "./archive.js";
+import Database from "better-sqlite3";
 
 export type RestorePhase = "VALIDATING" | "SAFETY_BACKUP" | "RESTORING" | "REBUILDING" | "DONE";
 export type RestoreCoordinator = {
@@ -29,6 +30,7 @@ export async function restoreArchive(archivePath: string, context: RestoreContex
     const extracted = await extractAndValidateArchive(archivePath, staging);
     context.onProgress?.("RESTORING");
     await materialize(next, extracted.manifest, extracted.objectsRoot);
+    preflightDatabase(join(next, "diary.sqlite"));
     await withRestoreLock(dataRoot, async () => {
       const live = await lstat(join(dataRoot, "diary.sqlite")).catch(missing);
       if (live && !context.coordinator) throw new Error("RESTORE_CONTEXT_REQUIRED");
@@ -70,6 +72,7 @@ async function materialize(root: string, manifest: SnapshotManifest, objectsRoot
     await copyFile(join(objectsRoot, item.hash), destination);
   }
 }
+function preflightDatabase(pathname: string): void { let database: Database.Database | undefined; try { database = new Database(pathname, { readonly: true, fileMustExist: true }); const quick = database.pragma("quick_check", { simple: true }); const version = database.pragma("user_version", { simple: true }) as number; const entry = database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'entries'").get(); if (quick !== "ok" || version < 8 || !entry) throw new Error("ARCHIVE_DATABASE_INVALID"); } catch (error) { if (error instanceof Error && error.message === "ARCHIVE_DATABASE_INVALID") throw error; throw new Error("ARCHIVE_DATABASE_INVALID", { cause: error }); } finally { database?.close(); } }
 function mediaDestination(root: string, logicalPath: string, hash: string): string { const match = /^media\/objects\/([a-f0-9]{2})\/([a-f0-9]{64})\.[a-z0-9]+$/.exec(logicalPath); if (!match || match[1] !== hash.slice(0, 2) || match[2] !== hash) throw new Error("ARCHIVE_UNSAFE_MEDIA_PATH"); const destination = resolve(root, logicalPath); if (!destination.startsWith(`${root}${sep}`)) throw new Error("ARCHIVE_UNSAFE_MEDIA_PATH"); return destination; }
 async function owned(pathname: string): Promise<boolean> { return Boolean(await lstat(join(pathname, ".local-diary-restore-owner")).catch(missing)); }
 async function removeOwned(pathname: string): Promise<void> { if (await owned(pathname)) await rm(pathname, { recursive: true, force: true }); }

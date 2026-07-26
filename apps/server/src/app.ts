@@ -38,7 +38,8 @@ export function buildServer(options: ServerOptions = {}) {
   const server = Fastify({ logger: false });
   const dataRoot = path.resolve(options.dataRoot ?? "data");
   const clock = options.clock ?? createBeijingClock();
-  const backupRoot = path.resolve(options.backupRoot ?? path.join(dataRoot, "backup"));
+  const backupRoot = path.resolve(options.backupRoot ?? `${dataRoot}.backups`);
+  const restoreTemporaryRoot = `${dataRoot}.restore-tmp`;
   let database = options.database ?? createDiaryDatabase(dataRoot);
   let mediaStore = new MediaStore(path.join(dataRoot, "media"));
   let entries = new EntryRepository(database, mediaStore);
@@ -51,7 +52,7 @@ export function buildServer(options: ServerOptions = {}) {
   let blocked = false; let active = 0; let drained!: () => void; let drain = Promise.resolve();
   server.addHook("onRequest", async (request, reply) => { if (request.url.startsWith("/api/v1/backups/restore")) return; if (blocked) return reply.code(503).send({ error: "RESTORE_IN_PROGRESS" }); (request as { restoreGate?: boolean }).restoreGate = true; active += 1; });
   server.addHook("onResponse", async (request) => { if (!(request as { restoreGate?: boolean }).restoreGate) return; active -= 1; if (active === 0) drained?.(); });
-  const defaultRestoreContext = () => ({ dataRoot, temporaryRoot: path.join(dataRoot, ".temporary"), coordinator: {
+  const defaultRestoreContext = () => ({ dataRoot, temporaryRoot: restoreTemporaryRoot, coordinator: {
     acquireBarrier: async () => { blocked = true; if (active > 0) { drain = new Promise<void>((resolvePromise) => { drained = resolvePromise; }); await drain; } return () => { blocked = false; }; },
     createSafetySnapshot: async () => { await snapshots.create(clock.dayKey(clock.publishedAt())); },
     quiesce: async () => { database.close(); }, reopen: async () => { rebuild(); }, rebuildDerivedData: async () => {},
@@ -64,7 +65,7 @@ export function buildServer(options: ServerOptions = {}) {
   void registerMediaRoutes(server, () => images);
   void registerMusicRoutes(server, () => music, () => recognition, options.musicUploadLimit);
   void registerMusicStreamRoute(server, () => database, () => mediaStore);
-  registerBackupRoutes(server, { snapshots: () => snapshots, temporaryRoot: path.join(dataRoot, ".temporary"), restoreContext: options.restoreContext ?? defaultRestoreContext });
+  registerBackupRoutes(server, { snapshots: () => snapshots, temporaryRoot: restoreTemporaryRoot, restoreContext: options.restoreContext ?? defaultRestoreContext });
   server.addHook("onClose", async () => database.close());
 
   return server;
