@@ -94,6 +94,12 @@ const migration008 = `
   );
 `;
 
+const migration009 = `
+  CREATE INDEX entries_published_day_cursor
+    ON entries(state, substr(published_at, 1, 10), published_at DESC, id DESC)
+    WHERE state = 'published';
+`;
+
 export function migrateDiaryDatabase(db: DiaryDatabase): void {
   db.pragma("foreign_keys = ON");
   const version = db.pragma("user_version", { simple: true }) as number;
@@ -159,6 +165,13 @@ export function migrateDiaryDatabase(db: DiaryDatabase): void {
     db.transaction(() => {
       db.exec(migration008);
       db.pragma("user_version = 8");
+    })();
+  }
+
+  if (version < 9) {
+    db.transaction(() => {
+      db.exec(migration009);
+      db.pragma("user_version = 9");
     })();
   }
 }

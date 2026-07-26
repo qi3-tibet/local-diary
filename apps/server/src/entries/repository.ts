@@ -21,6 +21,18 @@ type EntryRow = {
   edited_at: string | null;
 };
 
+export type DayPage = {
+  days: Array<{ day: string; entries: Entry[] }>;
+  previousCursor: string | null;
+  nextCursor: string | null;
+};
+
+type DayPageOptions = {
+  cursor?: string | null;
+  direction: "older" | "newer";
+  limitDays?: number;
+};
+
 export class EntryRepository {
   constructor(
     private readonly db: DiaryDatabase,
@@ -168,7 +180,7 @@ export class EntryRepository {
     return purge();
   }
 
-  searchPublished(query: string): Entry[] {
+  searchPublished(query: string, limit = 100): Entry[] {
     const text = query.trim();
     if (!text) return [];
     const useFts = Array.from(text).length >= 3;
@@ -182,11 +194,76 @@ export class EntryRepository {
           ? "entry_search MATCH ?"
           : "entry_search.title LIKE ? OR entry_search.body LIKE ? OR entry_search.tags LIKE ? OR entry_search.song_title LIKE ? OR entry_search.song_artist LIKE ? OR entry_search.song_album LIKE ?"}
       )
-      ORDER BY entries.published_at DESC
+      ORDER BY entries.published_at DESC, entries.id DESC
+      LIMIT ?
     `).all(...(useFts
-      ? [this.ftsPhrase(text)]
-      : Array(6).fill(`%${text}%`))) as EntryRow[];
+      ? [this.ftsPhrase(text), clampLimit(limit, 100, 1, 100)]
+      : [...Array(6).fill(`%${text}%`), clampLimit(limit, 100, 1, 100)])) as EntryRow[];
     return rows.map((row) => this.toEntry(row));
+  }
+
+  selectDayWindow(options: DayPageOptions): DayPage {
+    const limitDays = clampLimit(options.limitDays, 14, 1, 31);
+    const cursorDay = options.cursor ? decodeDayCursor(options.cursor) : null;
+    const comparison = options.direction === "older" ? "<" : ">";
+    const order = options.direction === "older" ? "DESC" : "ASC";
+    const days = this.db.prepare(`
+      SELECT DISTINCT substr(published_at, 1, 10) AS day
+      FROM entries
+      WHERE state = 'published'
+        ${cursorDay ? `AND substr(published_at, 1, 10) ${comparison} ?` : ""}
+      ORDER BY day ${order}
+      LIMIT ?
+    `).all(...(cursorDay ? [cursorDay, limitDays] : [limitDays])) as Array<{ day: string }>;
+    const chronological = options.direction === "older" ? [...days].reverse() : days;
+    const grouped = chronological.map(({ day }) => ({
+      day,
+      entries: this.entriesForDay(day),
+    }));
+    const newest = (options.direction === "older" ? days[0] : days.at(-1))?.day ?? null;
+    const oldest = (options.direction === "older" ? days.at(-1) : days[0])?.day ?? null;
+    return {
+      days: grouped,
+      previousCursor: newest ? encodeDayCursor(newest) : null,
+      nextCursor: oldest ? encodeDayCursor(oldest) : null,
+    };
+  }
+
+  private entriesForDay(day: string): Entry[] {
+    const rows = this.db.prepare(`
+      SELECT id, title, markdown, state, published_at, created_at, updated_at, deleted_at, edited_at
+      FROM entries
+      WHERE state = 'published' AND substr(published_at, 1, 10) = ?
+      ORDER BY published_at DESC, id DESC
+    `).all(day) as EntryRow[];
+    return rows.map((row) => this.toEntry(row));
+  }
+
+  selectDaysAround(day: string, limitDays = 15): DayPage {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new Error("Invalid day");
+    const limit = clampLimit(limitDays, 15, 1, 31);
+    const before = Math.floor((limit - 1) / 2);
+    const after = limit - before - 1;
+    const older = this.db.prepare(`
+      SELECT DISTINCT substr(published_at, 1, 10) AS day
+      FROM entries WHERE state = 'published' AND substr(published_at, 1, 10) < ?
+      ORDER BY day DESC LIMIT ?
+    `).all(day, before) as Array<{ day: string }>;
+    const center = this.db.prepare(`
+      SELECT DISTINCT substr(published_at, 1, 10) AS day
+      FROM entries WHERE state = 'published' AND substr(published_at, 1, 10) = ?
+    `).all(day) as Array<{ day: string }>;
+    const newer = this.db.prepare(`
+      SELECT DISTINCT substr(published_at, 1, 10) AS day
+      FROM entries WHERE state = 'published' AND substr(published_at, 1, 10) > ?
+      ORDER BY day ASC LIMIT ?
+    `).all(day, after) as Array<{ day: string }>;
+    const selected = [...older.reverse(), ...center, ...newer];
+    return {
+      days: selected.map(({ day: selectedDay }) => ({ day: selectedDay, entries: this.entriesForDay(selectedDay) })),
+      previousCursor: selected[0] ? encodeDayCursor(selected[0].day) : null,
+      nextCursor: selected.at(-1) ? encodeDayCursor(selected.at(-1)!.day) : null,
+    };
   }
 
   private getById(id: string): Entry | null {
@@ -420,4 +497,27 @@ function musicSearchValue(
   return Object.prototype.hasOwnProperty.call(overrides, key)
     ? overrides[key] ?? ""
     : base ?? "";
+}
+
+function clampLimit(value: number | undefined, fallback: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(value!)));
+}
+
+function encodeDayCursor(day: string): string {
+  return Buffer.from(JSON.stringify({ day }), "utf8").toString("base64url");
+}
+
+function decodeDayCursor(value: string): string {
+  try {
+    const decoded: unknown = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+    if (
+      !decoded
+      || typeof decoded !== "object"
+      || !/^\d{4}-\d{2}-\d{2}$/.test((decoded as { day?: unknown }).day as string)
+    ) throw new Error();
+    return (decoded as { day: string }).day;
+  } catch {
+    throw new Error("Invalid day cursor");
+  }
 }

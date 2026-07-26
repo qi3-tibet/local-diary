@@ -15,6 +15,12 @@ export type UploadedImage = {
   derivativeStatus: "ready" | "failed";
 };
 
+export type DayPage = {
+  days: Array<{ day: string; entries: Entry[] }>;
+  previousCursor: string | null;
+  nextCursor: string | null;
+};
+
 export type EditableMusic = MusicMetadata & {
   originalFilename?: string;
   candidates?: RecognitionCandidate[];
@@ -80,6 +86,15 @@ export function createApiClient(request: Request = fetch) {
       }
 
       return (await response.json()) as Entry[];
+    },
+
+    async listDayPage(day?: string): Promise<DayPage> {
+      const query = day ? `?day=${encodeURIComponent(day)}&limit=15` : "?direction=older&limit=15";
+      const response = await request(`/api/v1/entries/days${query}`, {
+        headers: { accept: "application/json" },
+      });
+      if (!response.ok) throw new Error(`Could not load diary days (${response.status}).`);
+      return (await response.json()) as DayPage;
     },
 
     async getDraft(): Promise<Entry | null> {

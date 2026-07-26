@@ -6,6 +6,7 @@ import { createDiaryDatabase } from "./db/client.js";
 import { EntryRepository } from "./entries/repository.js";
 import { MediaStore } from "./media/store.js";
 import { MusicService } from "./music/service.js";
+import { seedLargeDiaryInto } from "./e2e-large-fixture.js";
 
 const dataRoot = process.env.DIARY_DATA_ROOT;
 if (!dataRoot) throw new Error("DIARY_DATA_ROOT is required for the E2E server.");
@@ -66,6 +67,21 @@ server.post<{ Body: { corrupt?: boolean } }>("/__e2e__/music-fixture", async (re
       mediaId: attached.mediaId,
       streamUrl: `/api/v1/music/${attached.mediaId}/stream`,
     };
+  } finally {
+    database.close();
+  }
+});
+
+server.post<{ Headers: { "x-diary-e2e-token"?: string } }>("/__e2e__/large-fixture", async (request, reply) => {
+  if (process.env.NODE_ENV !== "test" || request.headers["x-diary-e2e-token"] !== process.env.DIARY_E2E_TOKEN) {
+    return reply.code(404).send();
+  }
+  const database = createDiaryDatabase(dataRoot);
+  try {
+    if ((database.prepare("SELECT COUNT(*) AS count FROM entries").get() as { count: number }).count < 20_000) {
+      seedLargeDiaryInto(database, 20_000, 5_000);
+    }
+    return { count: 20_000 };
   } finally {
     database.close();
   }

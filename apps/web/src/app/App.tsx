@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
 import { api } from "../api/client";
 import { DateRail } from "../diary/DateRail";
-import { Timeline } from "../diary/Timeline";
+import { WindowedTimeline } from "../diary/WindowedTimeline";
 import { groupEntriesByBeijingDay } from "../diary/date-groups";
 import { Editor } from "../editor/Editor";
 import { SearchPanel } from "../search/SearchPanel";
@@ -38,15 +38,16 @@ export function App() {
   const preference = useStore(themeSession.store, (state) => state.preference);
   const resolvedTheme = useStore(themeSession.store, (state) => state.resolved);
   const setPreference = useStore(themeSession.store, (state) => state.setPreference);
+  const requestedDay = new URLSearchParams(window.location.search).get("day") ?? undefined;
   const entriesQuery = useQuery({
-    queryKey: ["published-entries"],
-    queryFn: api.listEntries,
+    queryKey: ["published-entries", requestedDay],
+    queryFn: () => api.listDayPage(requestedDay),
   });
   const draftRecoveryQuery = useQuery({
     queryKey: ["draft"],
     queryFn: api.getDraft,
   });
-  const entries = entriesQuery.data ?? [];
+  const entries = entriesQuery.data?.days.flatMap((group) => group.entries) ?? [];
   const days = useMemo(
     () => groupEntriesByBeijingDay(entries).map((group) => group.day),
     [entries],
@@ -77,6 +78,13 @@ export function App() {
   useEffect(() => {
     if (activeDay) player.getState().setVisibleDay(activeDay);
   }, [activeDay, player]);
+
+  useEffect(() => {
+    if (!requestedDay || !entriesQuery.isSuccess) return;
+    window.requestAnimationFrame(() => {
+      document.getElementById(`day-${requestedDay}`)?.scrollIntoView({ block: "start", behavior: "auto" });
+    });
+  }, [entriesQuery.isSuccess, requestedDay]);
 
   useEffect(() => {
     if (!draftRecoveryQuery.isSuccess || checkedDraftRecovery.current) return;
@@ -202,8 +210,9 @@ export function App() {
     );
   } else {
     content = (
-      <Timeline
+      <WindowedTimeline
         entries={entries}
+        activeDay={activeDay}
         onActiveDayChange={setActiveDay}
         onEditEntry={editEntry}
         onTrashEntry={(entry) => void trashFromTimeline(entry)}

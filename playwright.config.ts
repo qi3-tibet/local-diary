@@ -37,6 +37,8 @@ export default defineConfig({
         DIARY_DATA_ROOT: dataRoot,
         DIARY_HOST: "127.0.0.1",
         DIARY_PORT: "4174",
+        NODE_ENV: "test",
+        DIARY_E2E_TOKEN: runId,
       },
       reuseExistingServer: false,
       timeout: 30_000,

@@ -22,6 +22,21 @@ export async function registerEntryRoutes(
       throw error;
     }
   });
+  server.get<{ Querystring: { cursor?: string; direction?: "older" | "newer"; limit?: string; day?: string } }>("/api/v1/entries/days", async (request, reply) => {
+    try {
+      const limit = request.query.limit ? Number(request.query.limit) : undefined;
+      const page = request.query.day
+        ? entries().selectDaysAround(request.query.day, limit)
+        : entries().selectDayWindow({
+            cursor: request.query.cursor ?? null,
+            direction: request.query.direction === "newer" ? "newer" : "older",
+            limitDays: limit,
+          });
+      return reply.send(page);
+    } catch {
+      return reply.code(400).send({ error: "INVALID_DAY_CURSOR" });
+    }
+  });
   server.get("/api/v1/entries", async () => service().listPublished());
   server.patch<{ Params: { id: string } }>("/api/v1/entries/:id", async (request, reply) => {
     const entry = entries().updatePublished(request.params.id, draftInputSchema.parse(request.body));
