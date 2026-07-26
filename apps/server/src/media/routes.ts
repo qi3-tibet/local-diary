@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { ImageEntryNotFoundError, ImageService } from "./images.js";
+import { ImageEntryNotFoundError, ImageService, ImageValidationError, isSupportedImageMime } from "./images.js";
 
 export async function registerMediaRoutes(
   server: FastifyInstance,
@@ -8,9 +8,9 @@ export async function registerMediaRoutes(
   server.post<{ Params: { id: string } }>("/api/v1/entries/:id/images", async (request, reply) => {
     const file = await request.file();
     if (!file) return reply.code(400).send({ error: "An image file is required" });
-    if (!file.mimetype.startsWith("image/")) {
+    if (!isSupportedImageMime(file.mimetype)) {
       file.file.resume();
-      return reply.code(415).send({ error: "Only image uploads are supported" });
+      return reply.code(415).send({ error: "Unsupported image MIME type" });
     }
 
     try {
@@ -23,6 +23,7 @@ export async function registerMediaRoutes(
       });
     } catch (error) {
       if (error instanceof ImageEntryNotFoundError) return reply.code(404).send();
+      if (error instanceof ImageValidationError) return reply.code(error.statusCode).send({ error: error.message });
       throw error;
     }
   });

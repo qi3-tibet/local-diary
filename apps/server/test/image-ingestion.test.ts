@@ -1,5 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -33,11 +33,22 @@ describe("image ingestion", () => {
     dataRoots.push(dataRoot);
     databases.push(database);
     return {
+      dataRoot,
       database,
       imageService: new ImageService(database, new MediaStore(path.join(dataRoot, "media"))),
       entry,
     };
   }
+
+  it("rejects media-store extensions that could escape the object directory", async () => {
+    const dataRoot = mkdtempSync(path.join(tmpdir(), "local-diary-media-store-"));
+    dataRoots.push(dataRoot);
+    const store = new MediaStore(path.join(dataRoot, "media"));
+
+    await expect(store.put(Buffer.from("image bytes"), "safe/../../../escape"))
+      .rejects.toThrow("Invalid media extension");
+    expect(() => store.pathFor("a".repeat(64), "webp.png")).toThrow("Invalid media extension");
+  });
 
   it("retains original bytes and creates display plus thumbnail derivatives", async () => {
     const { imageService, entry } = createImageService();
@@ -50,6 +61,45 @@ describe("image ingestion", () => {
     expect((await sharp(await readFile(result.thumbnailPath!)).metadata()).width).toBe(480);
     expect(result.originalHash).toMatch(/^[a-f0-9]{64}$/);
     expect(result.derivativeStatus).toBe("ready");
+  });
+
+  it("does not enlarge a small image while generating derivatives", async () => {
+    const { imageService, entry } = createImageService();
+    const fixture = await sharp({
+      create: { width: 320, height: 240, channels: 3, background: "#4f7a67" },
+    }).jpeg().toBuffer();
+
+    const result = await imageService.ingest(entry.id, Readable.from(fixture), "image/jpeg");
+
+    expect((await sharp(await readFile(result.displayPath!)).metadata()).width).toBe(320);
+    expect((await sharp(await readFile(result.thumbnailPath!)).metadata()).width).toBe(320);
+  });
+
+  it("accepts an actual AVIF upload", async () => {
+    const { imageService, entry } = createImageService();
+    const fixture = await sharp({
+      create: { width: 320, height: 240, channels: 3, background: "#4f7a67" },
+    }).avif().toBuffer();
+
+    const result = await imageService.ingest(entry.id, Readable.from(fixture), "image/avif");
+
+    expect(result.derivativeStatus).toBe("ready");
+  });
+
+  it("stores concurrent identical uploads as one content-addressed object", async () => {
+    const dataRoot = mkdtempSync(path.join(tmpdir(), "local-diary-concurrent-store-"));
+    dataRoots.push(dataRoot);
+    const store = new MediaStore(path.join(dataRoot, "media"));
+    const bytes = Buffer.from("same image bytes");
+
+    const [left, right] = await Promise.all([
+      store.put(bytes, "jpg"),
+      store.put(bytes, "jpg"),
+    ]);
+
+    expect(left.path).toBe(right.path);
+    expect(Number(left.created) + Number(right.created)).toBe(1);
+    expect(await storedObjectCount(dataRoot)).toBe(1);
   });
 
   it("keeps a valid unsupported original and records a retryable derivative error", async () => {
@@ -101,4 +151,120 @@ describe("image ingestion", () => {
       derivativeStatus: "ready",
     });
   });
+
+  it("returns 415 without storing an unsupported declared image type", async () => {
+    const { dataRoot, database, entryId, server } = await createRouteServer();
+    const { boundary, payload } = multipartPayload("image/svg+xml", Buffer.from("<svg/>"), "image.svg");
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/v1/entries/${entryId}/images`,
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      payload,
+    });
+
+    expect(response.statusCode).toBe(415);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM media").get()).toEqual({ count: 0 });
+    expect(existsSync(path.join(dataRoot, "media"))).toBe(false);
+  });
+
+  it("returns 422 without storing bytes that do not match the declared image type", async () => {
+    const { dataRoot, database, entryId, server } = await createRouteServer();
+    const actualPng = await sharp({
+      create: { width: 16, height: 16, channels: 3, background: "#4f7a67" },
+    }).png().toBuffer();
+    const { boundary, payload } = multipartPayload("image/jpeg", actualPng, "spoof.jpg");
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/v1/entries/${entryId}/images`,
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      payload,
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM media").get()).toEqual({ count: 0 });
+    expect(existsSync(path.join(dataRoot, "media"))).toBe(false);
+  });
+
+  it("removes a written derivative when a later derivative write fails", async () => {
+    const { dataRoot, database, entry } = createImageService();
+    const imageService = new ImageService(
+      database,
+      new FailBeforeThirdWriteStore(path.join(dataRoot, "media")),
+    );
+    const fixture = await sharp(await readFile(fixturePath("portrait.svg"))).jpeg().toBuffer();
+
+    const result = await imageService.ingest(entry.id, Readable.from(fixture), "image/jpeg");
+
+    expect(result.derivativeStatus).toBe("failed");
+    expect(result.derivativeError).toContain("thumbnail write failed");
+    expect(await storedObjectCount(dataRoot)).toBe(1);
+    expect(database.prepare("SELECT derivative_status FROM media WHERE id = ?").get(result.mediaId))
+      .toEqual({ derivative_status: "failed" });
+  });
+
+  it("cleans derivative objects and surfaces a database failure while media remains pending", async () => {
+    const { dataRoot, database, imageService, entry } = createImageService();
+    database.exec(`
+      CREATE TRIGGER reject_ready_media
+      BEFORE UPDATE OF derivative_status ON media
+      WHEN NEW.derivative_status = 'ready'
+      BEGIN SELECT RAISE(ABORT, 'ready rejected'); END;
+    `);
+    const fixture = await sharp(await readFile(fixturePath("portrait.svg"))).jpeg().toBuffer();
+
+    await expect(imageService.ingest(entry.id, Readable.from(fixture), "image/jpeg"))
+      .rejects.toThrow("ready rejected");
+
+    expect(await storedObjectCount(dataRoot)).toBe(1);
+    expect(database.prepare("SELECT derivative_status FROM media").get())
+      .toEqual({ derivative_status: "pending" });
+  });
+
+  async function createRouteServer() {
+    const dataRoot = mkdtempSync(path.join(tmpdir(), "local-diary-images-route-"));
+    const database = createDiaryDatabase(dataRoot);
+    const server = buildServer({ dataRoot, database });
+    dataRoots.push(dataRoot);
+    servers.push(server);
+    await server.inject({
+      method: "PUT",
+      url: "/api/v1/draft",
+      payload: { title: "Photo", markdown: "A picture", tags: [] },
+    });
+    const entry = await server.inject({ method: "POST", url: "/api/v1/draft/publish" });
+    return { dataRoot, database, entryId: entry.json().id as string, server };
+  }
+
+  function multipartPayload(mime: string, bytes: Buffer, filename: string) {
+    const boundary = "image-upload-boundary";
+    return {
+      boundary,
+      payload: Buffer.concat([
+        Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="image"; filename="${filename}"\r\nContent-Type: ${mime}\r\n\r\n`),
+        bytes,
+        Buffer.from(`\r\n--${boundary}--\r\n`),
+      ]),
+    };
+  }
+
+  async function storedObjectCount(dataRoot: string): Promise<number> {
+    const root = path.join(dataRoot, "media", "objects");
+    const directories = await readdir(root);
+    const files = await Promise.all(directories.map(async (directory) =>
+      readdir(path.join(root, directory)),
+    ));
+    return files.flat().filter((file) => !file.endsWith(".tmp")).length;
+  }
 });
+
+class FailBeforeThirdWriteStore extends MediaStore {
+  private writes = 0;
+
+  override async put(input: Buffer | Readable, extension: string) {
+    this.writes += 1;
+    if (this.writes === 3) throw new Error("thumbnail write failed");
+    return super.put(input, extension);
+  }
+}
