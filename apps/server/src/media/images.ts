@@ -54,8 +54,37 @@ export class ImageService {
     const imageType = imageTypeForMime(mime);
     const bytes = await readStream(stream);
     await validateImage(bytes, imageType.format);
+    let derivatives: { display: Buffer; thumbnail: Buffer } | null = null;
+    let derivativeError: unknown = null;
+    try {
+      derivatives = await deriveImage(bytes, normalizeMime(mime));
+    } catch (error) {
+      derivativeError = error;
+    }
 
-    const original = await this.store.put(bytes, imageType.extension);
+    const hashes = [this.store.hash(bytes)];
+    if (derivatives) {
+      hashes.push(this.store.hash(derivatives.display), this.store.hash(derivatives.thumbnail));
+    }
+    return this.store.withObjectLocks(hashes, async () => this.persistIngestion(
+      entryId,
+      bytes,
+      imageType.extension,
+      normalizeMime(mime),
+      derivatives,
+      derivativeError,
+    ));
+  }
+
+  private async persistIngestion(
+    entryId: string,
+    bytes: Buffer,
+    originalExtension: string,
+    mime: string,
+    derivatives: { display: Buffer; thumbnail: Buffer } | null,
+    derivativeError: unknown,
+  ): Promise<ImageIngestionResult> {
+    const original = await this.store.put(bytes, originalExtension);
     const mediaId = randomUUID();
     const now = new Date().toISOString();
     try {
@@ -64,17 +93,18 @@ export class ImageService {
           id, entry_id, original_hash, original_mime, original_extension,
           display_hash, thumbnail_hash, derivative_status, derivative_error, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, NULL, NULL, 'pending', NULL, ?, ?)
-      `).run(mediaId, entryId, original.hash, normalizeMime(mime), imageType.extension, now, now);
+      `).run(mediaId, entryId, original.hash, mime, originalExtension, now, now);
     } catch (error) {
       await this.removeUnreferenced([original]);
       throw error;
     }
 
+    if (!derivatives) return this.recordDerivativeFailure(mediaId, original, derivativeError);
+
     const createdDerivatives: StoredMedia[] = [];
     let display: StoredMedia;
     let thumbnail: StoredMedia;
     try {
-      const derivatives = await deriveImage(bytes, normalizeMime(mime));
       display = await this.store.put(derivatives.display, "webp");
       if (display.created) createdDerivatives.push(display);
       thumbnail = await this.store.put(derivatives.thumbnail, "webp");

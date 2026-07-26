@@ -222,6 +222,39 @@ describe("image ingestion", () => {
       .toEqual({ derivative_status: "pending" });
   });
 
+  it("does not delete a concurrent successful upload's shared objects during failed cleanup", async () => {
+    const { dataRoot, database, entry } = createImageService();
+    const entries = new EntryRepository(database);
+    const successDraft = entries.saveDraft({ title: "Second", markdown: "Another picture", tags: [] });
+    const successEntry = entries.publishDraft(successDraft.id, "2026-07-26T09:00:00.000Z");
+    database.exec(`
+      CREATE TRIGGER reject_first_entry_ready
+      BEFORE UPDATE OF derivative_status ON media
+      WHEN NEW.derivative_status = 'ready'
+        AND (SELECT entry_id FROM media WHERE id = NEW.id) = '${entry.id}'
+      BEGIN SELECT RAISE(ABORT, 'first entry rejected'); END;
+    `);
+    const store = new BlockingCleanupStore(path.join(dataRoot, "media"));
+    const imageService = new ImageService(database, store);
+    const fixture = await sharp({
+      create: { width: 320, height: 240, channels: 3, background: "#4f7a67" },
+    }).jpeg().toBuffer();
+
+    const failing = imageService.ingest(entry.id, Readable.from(fixture), "image/jpeg");
+    await store.waitUntilRemoving();
+    const successful = imageService.ingest(successEntry.id, Readable.from(fixture), "image/jpeg");
+    const settledBeforeCleanup = await settlesWithin(successful, 500);
+    store.releaseCleanup();
+
+    await expect(failing).rejects.toThrow("first entry rejected");
+    const success = await successful;
+    expect(settledBeforeCleanup).toBe(false);
+    expect(success.derivativeStatus).toBe("ready");
+    expect(existsSync(success.originalPath)).toBe(true);
+    expect(existsSync(success.displayPath!)).toBe(true);
+    expect(existsSync(success.thumbnailPath!)).toBe(true);
+  });
+
   async function createRouteServer() {
     const dataRoot = mkdtempSync(path.join(tmpdir(), "local-diary-images-route-"));
     const database = createDiaryDatabase(dataRoot);
@@ -257,6 +290,13 @@ describe("image ingestion", () => {
     ));
     return files.flat().filter((file) => !file.endsWith(".tmp")).length;
   }
+
+  async function settlesWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+    return Promise.race([
+      promise.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+    ]);
+  }
 });
 
 class FailBeforeThirdWriteStore extends MediaStore {
@@ -266,5 +306,36 @@ class FailBeforeThirdWriteStore extends MediaStore {
     this.writes += 1;
     if (this.writes === 3) throw new Error("thumbnail write failed");
     return super.put(input, extension);
+  }
+}
+
+class BlockingCleanupStore extends MediaStore {
+  private readonly cleanupStarted: Promise<void>;
+  private readonly cleanupReleased: Promise<void>;
+  private startCleanup!: () => void;
+  private release!: () => void;
+  private hasStartedCleanup = false;
+
+  constructor(root: string) {
+    super(root);
+    this.cleanupStarted = new Promise((resolve) => { this.startCleanup = resolve; });
+    this.cleanupReleased = new Promise((resolve) => { this.release = resolve; });
+  }
+
+  override async remove(path: string): Promise<void> {
+    if (!this.hasStartedCleanup) {
+      this.hasStartedCleanup = true;
+      this.startCleanup();
+    }
+    await this.cleanupReleased;
+    await super.remove(path);
+  }
+
+  waitUntilRemoving(): Promise<void> {
+    return this.cleanupStarted;
+  }
+
+  releaseCleanup(): void {
+    this.release();
   }
 }
