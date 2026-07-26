@@ -2,6 +2,13 @@ import type { DraftInput, Entry } from "@diary/contracts";
 
 type Request = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
+export type UploadedImage = {
+  mediaId: string;
+  markdownUrl: string;
+  alt: string;
+  derivativeStatus: "ready" | "failed";
+};
+
 export function createApiClient(request: Request = fetch) {
   async function entryRequest(
     path: string,
@@ -95,6 +102,22 @@ export function createApiClient(request: Request = fetch) {
         method: "POST",
         headers: { accept: "application/json" },
       });
+    },
+
+    async uploadImage(entryId: string, image: File): Promise<UploadedImage> {
+      const form = new FormData();
+      form.append("image", image);
+      const response = await request(`/api/v1/entries/${entryId}/images`, {
+        method: "POST",
+        headers: { accept: "application/json" },
+        body: form,
+      });
+      if (!response.ok) throw new Error(`Could not upload the image (${response.status}).`);
+      return (await response.json()) as UploadedImage;
+    },
+
+    mediaDisplayUrl(mediaId: string): string {
+      return `/api/v1/media/${encodeURIComponent(mediaId)}/display`;
     },
   };
 }

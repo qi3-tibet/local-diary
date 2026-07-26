@@ -108,4 +108,29 @@ describe("diary API client", () => {
       headers: { accept: "application/json" },
     });
   });
+
+  it("uploads an image for an entry and exposes its stable display URL", async () => {
+    const uploaded = {
+      mediaId: "image-1",
+      markdownUrl: "media:image-1",
+      alt: "portrait.png",
+      derivativeStatus: "ready",
+    };
+    const request = vi.fn<RequestFn>(async () =>
+      new Response(JSON.stringify(uploaded), { status: 201 }),
+    );
+    const client = createApiClient(request);
+    const image = new File(["image bytes"], "portrait.png", { type: "image/png" });
+
+    await expect(client.uploadImage("entry-1", image)).resolves.toEqual(uploaded);
+    expect(request).toHaveBeenCalledOnce();
+    const [path, init] = request.mock.calls[0]!;
+    expect(path).toBe("/api/v1/entries/entry-1/images");
+    expect(init).toMatchObject({ method: "POST" });
+    expect(init?.body).toBeInstanceOf(FormData);
+    expect((init?.body as FormData).get("image")).toBe(image);
+    expect(client.mediaDisplayUrl("image / 1")).toBe(
+      "/api/v1/media/image%20%2F%201/display",
+    );
+  });
 });

@@ -1,3 +1,4 @@
+import { createReadStream } from "node:fs";
 import type { FastifyInstance } from "fastify";
 import { ImageEntryNotFoundError, ImageService, ImageValidationError, isSupportedImageMime } from "./images.js";
 
@@ -26,5 +27,11 @@ export async function registerMediaRoutes(
       if (error instanceof ImageValidationError) return reply.code(error.statusCode).send({ error: error.message });
       throw error;
     }
+  });
+
+  server.get<{ Params: { id: string } }>("/api/v1/media/:id/display", async (request, reply) => {
+    const image = images.findDisplay(request.params.id);
+    if (!image) return reply.code(404).send();
+    return reply.type(image.mime).send(createReadStream(image.path));
   });
 }

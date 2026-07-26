@@ -1,5 +1,6 @@
 import type { Entry } from "@diary/contracts";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import { api } from "../api/client";
 import { formatEntryTime } from "./date-groups";
 
 type EntryBodyProps = {
@@ -7,6 +8,29 @@ type EntryBodyProps = {
   onEdit?(entry: Entry): void;
   onTrash?(entry: Entry): void;
 };
+
+export function DiaryMarkdown({ children }: { children: string }) {
+  return (
+    <ReactMarkdown
+      urlTransform={(url) => url.startsWith("media:") ? url : defaultUrlTransform(url)}
+      components={{
+        img: ({ src = "", alt = "" }) => {
+          const mediaId = src.startsWith("media:") ? src.slice(6) : "";
+          return (
+            <img
+              src={mediaId ? api.mediaDisplayUrl(mediaId) : src}
+              alt={alt}
+              loading="lazy"
+              decoding="async"
+            />
+          );
+        },
+      }}
+    >
+      {children}
+    </ReactMarkdown>
+  );
+}
 
 export function EntryBody({ entry, onEdit, onTrash }: EntryBodyProps) {
   if (!entry.publishedAt) return null;
@@ -17,7 +41,7 @@ export function EntryBody({ entry, onEdit, onTrash }: EntryBodyProps) {
         {formatEntryTime(entry.publishedAt)}
       </time>
       <div className="entry-body">
-        <ReactMarkdown>{entry.markdown}</ReactMarkdown>
+        <DiaryMarkdown>{entry.markdown}</DiaryMarkdown>
       </div>
       {onEdit || onTrash ? (
         <div className="entry-actions">

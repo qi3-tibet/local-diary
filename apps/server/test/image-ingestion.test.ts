@@ -152,6 +152,64 @@ describe("image ingestion", () => {
     });
   });
 
+  it("streams a stable display derivative for an uploaded media id", async () => {
+    const { entryId, server } = await createRouteServer();
+    const fixture = await sharp({
+      create: { width: 48, height: 32, channels: 3, background: "#4f7a67" },
+    }).png().toBuffer();
+    const { boundary, payload } = multipartPayload("image/png", fixture, "field.png");
+    const upload = await server.inject({
+      method: "POST",
+      url: `/api/v1/entries/${entryId}/images`,
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      payload,
+    });
+
+    const response = await server.inject({
+      method: "GET",
+      url: `/api/v1/media/${upload.json().mediaId}/display`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-type"]).toBe("image/webp");
+    expect((await sharp(response.rawPayload).metadata()).format).toBe("webp");
+  });
+
+  it("returns 404 when a display media id does not exist", async () => {
+    const { server } = await createRouteServer();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/v1/media/missing/display",
+    });
+
+    expect(response.statusCode).toBe(404);
+  });
+
+  it("streams the original when derivative generation failed", async () => {
+    const { entryId, server } = await createRouteServer();
+    const fixture = await sharp({
+      create: { width: 24, height: 16, channels: 3, background: "#4f7a67" },
+    }).tiff().toBuffer();
+    const { boundary, payload } = multipartPayload("image/tiff", fixture, "scan.tiff");
+    const upload = await server.inject({
+      method: "POST",
+      url: `/api/v1/entries/${entryId}/images`,
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      payload,
+    });
+
+    const response = await server.inject({
+      method: "GET",
+      url: `/api/v1/media/${upload.json().mediaId}/display`,
+    });
+
+    expect(upload.json().derivativeStatus).toBe("failed");
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-type"]).toBe("image/tiff");
+    expect(response.rawPayload).toEqual(fixture);
+  });
+
   it("returns 415 without storing an unsupported declared image type", async () => {
     const { dataRoot, database, entryId, server } = await createRouteServer();
     const { boundary, payload } = multipartPayload("image/svg+xml", Buffer.from("<svg/>"), "image.svg");

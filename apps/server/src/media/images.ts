@@ -29,6 +29,11 @@ export type ImageIngestionResult = {
   derivativeError: string | null;
 };
 
+export type DisplayImage = {
+  path: string;
+  mime: string;
+};
+
 export class ImageEntryNotFoundError extends Error {}
 
 export class ImageValidationError extends Error {
@@ -74,6 +79,31 @@ export class ImageService {
       derivatives,
       derivativeError,
     ));
+  }
+
+  findDisplay(mediaId: string): DisplayImage | null {
+    const image = this.database.prepare(`
+      SELECT original_hash, original_mime, original_extension, display_hash, derivative_status
+      FROM media
+      WHERE id = ?
+    `).get(mediaId) as {
+      original_hash: string;
+      original_mime: string;
+      original_extension: string;
+      display_hash: string | null;
+      derivative_status: DerivativeStatus | "pending";
+    } | undefined;
+    if (!image) return null;
+    if (image.derivative_status === "ready" && image.display_hash) {
+      return {
+        path: this.store.pathFor(image.display_hash, "webp"),
+        mime: "image/webp",
+      };
+    }
+    return {
+      path: this.store.pathFor(image.original_hash, image.original_extension),
+      mime: image.original_mime,
+    };
   }
 
   private async persistIngestion(

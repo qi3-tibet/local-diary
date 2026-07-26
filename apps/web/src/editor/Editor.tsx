@@ -1,8 +1,10 @@
 import type { DraftInput, Entry } from "@diary/contracts";
 import { useQuery } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import { type FormEvent, useRef, useState } from "react";
 import { api } from "../api/client";
+import { DiaryMarkdown } from "../diary/EntryBody";
+import { ImageInsert } from "./ImageInsert";
+import { insertAtSelection } from "./insert-at-selection";
 import { ModeGlyph } from "./ModeGlyph";
 import { useSilentDraft } from "./useSilentDraft";
 
@@ -20,16 +22,40 @@ type EditorProps = {
 
 type EditorFormProps = EditorProps & {
   initialValue: DraftInput;
+  draftId?: string;
 };
 
-function EditorForm({ entry, initialValue, onCancel, onComplete }: EditorFormProps) {
+function EditorForm({ entry, initialValue, draftId, onCancel, onComplete }: EditorFormProps) {
   const [value, setValue] = useState(initialValue);
   const [preview, setPreview] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>();
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  const uploadEntryId = useRef(entry?.id ?? draftId);
   const isDraft = !entry;
 
   const draftPersistence = useSilentDraft(value, api.saveDraft, isDraft && !submitting);
+
+  async function insertImage(image: File): Promise<void> {
+    const field = textarea.current;
+    if (!field) return;
+    const start = field.selectionStart;
+    const end = field.selectionEnd;
+    const entryId = uploadEntryId.current
+      ?? (await api.saveDraft(value)).id;
+    uploadEntryId.current = entryId;
+    const uploaded = await api.uploadImage(entryId, image);
+    const markdown = `![${uploaded.alt}](${uploaded.markdownUrl})`;
+    const cursor = start + markdown.length;
+    setValue((current) => ({
+      ...current,
+      markdown: insertAtSelection(current.markdown, start, end, markdown).value,
+    }));
+    window.requestAnimationFrame(() => {
+      textarea.current?.focus();
+      textarea.current?.setSelectionRange(cursor, cursor);
+    });
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -65,17 +91,21 @@ function EditorForm({ entry, initialValue, onCancel, onComplete }: EditorFormPro
               onChange={(event) => setValue({ ...value, title: event.target.value })}
             />
           </label>
-          <ModeGlyph preview={preview} onToggle={() => setPreview((current) => !current)} />
+          <div className="editor-glyphs">
+            {!preview ? <ImageInsert onSelect={insertImage} /> : null}
+            <ModeGlyph preview={preview} onToggle={() => setPreview((current) => !current)} />
+          </div>
         </div>
 
         {preview ? (
           <div className="editor-preview entry-body" aria-label="Markdown preview">
-            <ReactMarkdown>{value.markdown}</ReactMarkdown>
+            <DiaryMarkdown>{value.markdown}</DiaryMarkdown>
           </div>
         ) : (
           <label className="editor-body-field">
             <span>MARKDOWN</span>
             <textarea
+              ref={textarea}
               aria-label="Markdown body"
               value={value.markdown}
               onChange={(event) => setValue({ ...value, markdown: event.target.value })}
@@ -133,6 +163,7 @@ export function Editor(props: EditorProps) {
       {...props}
       key={draft?.id ?? "new-draft"}
       initialValue={draft ?? emptyDraft}
+      draftId={draft?.id}
     />
   );
 }
