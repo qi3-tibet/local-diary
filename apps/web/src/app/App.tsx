@@ -55,6 +55,7 @@ export function App() {
   );
   const [activeDay, setActiveDay] = useState<string>();
   const [jumpTarget, setJumpTarget] = useState<string>();
+  const [timelineNavigationKey, setTimelineNavigationKey] = useState(0);
   const [pendingEntryFocus, setPendingEntryFocus] = useState<string>();
   const sortedDays = useMemo(() => [...days].sort(), [days]);
   const restoreLocked = restoreState
@@ -95,13 +96,27 @@ export function App() {
 
   useEffect(() => {
     if (!jumpTarget) return;
-    window.requestAnimationFrame(() => {
+    let frame = window.requestAnimationFrame(() => {
       const section = document.getElementById(`day-${jumpTarget}`);
       if (!section) return;
+      const root = document.documentElement;
+      const scrollBehavior = root.style.scrollBehavior;
+      root.style.scrollBehavior = "auto";
       section.scrollIntoView({ block: "center", behavior: "auto" });
+      root.style.scrollBehavior = scrollBehavior;
       section.focus({ preventScroll: true });
-      setJumpTarget(undefined);
+      let previous = window.scrollY;
+      let stableFrames = 0;
+      const finishWhenSettled = () => {
+        const next = window.scrollY;
+        stableFrames = Math.abs(next - previous) < 0.5 ? stableFrames + 1 : 0;
+        previous = next;
+        if (stableFrames >= 4) setJumpTarget(undefined);
+        else frame = window.requestAnimationFrame(finishWhenSettled);
+      };
+      frame = window.requestAnimationFrame(finishWhenSettled);
     });
+    return () => window.cancelAnimationFrame(frame);
   }, [dayPage, jumpTarget]);
 
   useEffect(() => {
@@ -246,6 +261,7 @@ export function App() {
     setJumpTarget(day);
     setDayPage(next);
     setActiveDay(day);
+    setTimelineNavigationKey((value) => value + 1);
   }
 
   let content;
@@ -289,6 +305,7 @@ export function App() {
         activeDay={activeDay}
         preserveAnchor={!jumpTarget}
         pagingEnabled={!jumpTarget}
+        navigationResetKey={timelineNavigationKey}
         onNeedOlder={() => void loadOlder()}
         onNeedNewer={() => void loadNewer()}
         onActiveDayChange={(day) => { if (!jumpTarget) setActiveDay(day); }}
