@@ -34,6 +34,9 @@ describe("offline language typography", () => {
   it("keeps interface controls and placeholders in Georgia", () => {
     expect(ruleFor("body")).toContain("font-family: var(--ui-font)");
     expect(ruleFor("button")).toContain("font-family: var(--ui-font)");
+    expect(ruleFor(".management-heading input")).toContain(
+      "font-family: var(--ui-font)",
+    );
     expect(ruleFor("input::placeholder")).toContain("font-family: var(--ui-font)");
     expect(ruleFor("textarea::placeholder")).toContain("font-family: var(--ui-font)");
   });

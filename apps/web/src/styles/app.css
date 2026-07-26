@@ -32,6 +32,12 @@ select {
   color: inherit;
 }
 
+input,
+textarea,
+select {
+  font-family: var(--ui-font);
+}
+
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
@@ -631,9 +637,13 @@ textarea::placeholder {
   border-bottom: 1px solid var(--line);
   border-radius: 0;
   color: var(--ink);
-  font-family: var(--body-cn-font);
+  font-family: var(--ui-font);
   font-size: 1.3rem;
   outline: 0;
+}
+
+.editor-title-field input {
+  font-family: var(--body-cn-font);
 }
 
 .entry-title-index {

@@ -76,6 +76,18 @@ test("attaches a valid local MP3 and corrects its metadata without external reco
 
   const metadata = page.getByRole("region", { name: "Music metadata" });
   await expect(metadata).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Song title" })).toHaveCSS(
+    "font-family",
+    /Noto Serif SC/u,
+  );
+  await expect(page.getByRole("textbox", { name: "Artist" })).toHaveCSS(
+    "font-family",
+    /Noto Serif SC/u,
+  );
+  await expect(page.getByRole("textbox", { name: "Album" })).toHaveCSS(
+    "font-family",
+    /Noto Serif SC/u,
+  );
   await page.getByRole("textbox", { name: "Song title" }).fill("夜航");
   await page.getByRole("textbox", { name: "Artist" }).fill("某人");
   await page.getByRole("textbox", { name: "Album" }).fill("窗边");

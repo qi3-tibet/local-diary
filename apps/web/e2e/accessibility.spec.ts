@@ -131,7 +131,13 @@ test("keeps Georgia on interface copy and Noto Serif SC on approved content", as
     /Noto Serif SC/u,
   );
   await page.getByRole("button", { name: "Search" }).click();
-  await page.getByLabel("Search diary").fill("字体边界");
+  const search = page.getByLabel("Search diary");
+  await expect(search).toHaveCSS("font-family", /Georgia/u);
+  await search.fill("字体边界");
+  const tags = page.getByLabel(/tags?/iu);
+  if (await tags.count()) {
+    await expect(tags).toHaveCSS("font-family", /Georgia/u);
+  }
   const result = page.getByRole("listitem").filter({ hasText: "字体边界" });
   await expect(result.getByRole("button", { name: "字体边界" })).toHaveCSS(
     "font-family",
@@ -139,6 +145,18 @@ test("keeps Georgia on interface copy and Noto Serif SC on approved content", as
   );
   await result.getByRole("button", { name: "Move to trash" }).click();
   await expect(result).not.toBeVisible();
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByLabel("Export from")).toHaveCSS("font-family", /Georgia/u);
+  await expect(page.getByLabel("Export to")).toHaveCSS("font-family", /Georgia/u);
+  await expect(page.getByLabel("Restore complete archive")).toHaveCSS(
+    "font-family",
+    /Georgia/u,
+  );
+  await expect(page.getByRole("button", { name: "Create snapshot" })).toHaveCSS(
+    "font-family",
+    /Georgia/u,
+  );
 });
 
 async function activateWithKeyboard(page: Page, locator: ReturnType<Page["locator"]>) {
