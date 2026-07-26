@@ -86,6 +86,8 @@ describe("music recognition pipeline", () => {
 });
 
 describe("MusicBrainz text lookup adapter", () => {
+  afterEach(() => vi.useRealTimers());
+
   it("uses a fixed HTTPS endpoint, encoded bounded query, user agent, and normalized scores", async () => {
     const request = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({
       recordings: [
@@ -163,6 +165,84 @@ describe("MusicBrainz text lookup adapter", () => {
 
     expect(starts).toEqual([10_000, 11_000]);
     expect(sleeps).toEqual([1_000]);
+  });
+
+  it("gives every queued request its full network timeout after its pacing slot", async () => {
+    vi.useFakeTimers();
+    let now = 20_000;
+    const starts: Array<{ at: number; aborted: boolean }> = [];
+    const pacer = createMusicBrainzRequestPacer({
+      now: () => now,
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+        vi.advanceTimersByTime(milliseconds);
+      },
+    });
+    const request = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      starts.push({ at: now, aborted: init?.signal?.aborted ?? false });
+      if (init?.signal?.aborted) throw new DOMException("Timed out", "AbortError");
+      return new Response(JSON.stringify({
+        recordings: [{
+          id: "9f9b6ca8-8f0d-4f8c-ad6a-6a4acee9cf23",
+          score: "98",
+          title: "Queued song",
+          "artist-credit": [{ artist: { name: "Queued artist" } }],
+          releases: [],
+        }],
+      }), { status: 200 });
+    });
+    const lookups = Array.from({ length: 4 }, () =>
+      createMusicBrainzTextLookup({
+        request,
+        pacer,
+        timeoutMs: 500,
+      }));
+    const input = {
+      embedded: { title: "Queued song", artist: null, album: null, year: null, coverMediaId: null },
+      filename: "queued.mp3",
+    };
+
+    const results = await Promise.all(lookups.map((lookup) => lookup.search(input)));
+
+    expect(starts).toEqual([
+      { at: 20_000, aborted: false },
+      { at: 21_000, aborted: false },
+      { at: 22_000, aborted: false },
+      { at: 23_000, aborted: false },
+    ]);
+    expect(results.every((candidates) => candidates[0]?.title === "Queued song")).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("absorbs pacing and fetch failures without leaking timeout timers", async () => {
+    vi.useFakeTimers();
+    const input = {
+      embedded: { title: "Song", artist: null, album: null, year: null, coverMediaId: null },
+      filename: "song.mp3",
+    };
+    const request = vi.fn(async () => {
+      throw new Error("offline");
+    });
+    const rejectedPacer = {
+      schedule: async <T,>(_work: () => Promise<T>): Promise<T> => {
+        throw new Error("pacer unavailable");
+      },
+    };
+
+    await expect(createMusicBrainzTextLookup({
+      request,
+      pacer: rejectedPacer,
+      timeoutMs: 500,
+    }).search(input)).resolves.toEqual([]);
+    expect(request).not.toHaveBeenCalled();
+
+    await expect(createMusicBrainzTextLookup({
+      request,
+      pacer: noWaitMusicBrainzPacer(),
+      timeoutMs: 500,
+    }).search(input)).resolves.toEqual([]);
+    expect(request).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("returns no candidates for empty signals, non-success, timeout, or malformed payloads", async () => {

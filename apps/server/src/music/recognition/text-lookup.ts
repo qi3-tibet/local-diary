@@ -75,23 +75,27 @@ export function createMusicBrainzTextLookup(
       url.searchParams.set("dismax", "true");
       url.searchParams.set("query", signals.join(" "));
 
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const response = await pacer.schedule(() => request(url, {
-          headers: {
-            accept: "application/json",
-            "user-agent": userAgent,
-          },
-          redirect: "error",
-          signal: controller.signal,
-        }));
-        if (!response.ok) return [];
-        return parseMusicBrainzResponse(await response.json());
+        return await pacer.schedule(async () => {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), timeoutMs);
+          try {
+            const response = await request(url, {
+              headers: {
+                accept: "application/json",
+                "user-agent": userAgent,
+              },
+              redirect: "error",
+              signal: controller.signal,
+            });
+            if (!response.ok) return [];
+            return parseMusicBrainzResponse(await response.json());
+          } finally {
+            clearTimeout(timer);
+          }
+        });
       } catch {
         return [];
-      } finally {
-        clearTimeout(timer);
       }
     },
   };
