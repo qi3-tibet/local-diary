@@ -1,4 +1,10 @@
-import type { DraftInput, Entry } from "@diary/contracts";
+import type {
+  DraftInput,
+  Entry,
+  MusicMetadata,
+  MusicMetadataOverride,
+  RecognitionCandidate,
+} from "@diary/contracts";
 
 type Request = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -7,6 +13,12 @@ export type UploadedImage = {
   markdownUrl: string;
   alt: string;
   derivativeStatus: "ready" | "failed";
+};
+
+export type EditableMusic = MusicMetadata & {
+  originalFilename?: string;
+  candidates?: RecognitionCandidate[];
+  selectedCandidateId?: string | null;
 };
 
 export function createApiClient(request: Request = fetch) {
@@ -116,10 +128,65 @@ export function createApiClient(request: Request = fetch) {
       return (await response.json()) as UploadedImage;
     },
 
+    async uploadMusic(entryId: string, music: File): Promise<EditableMusic> {
+      const form = new FormData();
+      form.append("music", music);
+      return musicRequest(`/api/v1/entries/${entryId}/music`, "Could not attach the MP3", {
+        method: "POST",
+        headers: { accept: "application/json" },
+        body: form,
+      });
+    },
+
+    recognizeMusic(entryId: string): Promise<EditableMusic> {
+      return musicRequest(
+        `/api/v1/entries/${entryId}/music/recognition`,
+        "Could not recognize the music",
+        { method: "POST", headers: { accept: "application/json" } },
+      );
+    },
+
+    patchMusicMetadata(
+      entryId: string,
+      patch: MusicMetadataOverride,
+    ): Promise<EditableMusic> {
+      return musicRequest(
+        `/api/v1/entries/${entryId}/music/metadata`,
+        "Could not save music metadata",
+        {
+          method: "PATCH",
+          headers: { accept: "application/json", "content-type": "application/json" },
+          body: JSON.stringify(patch),
+        },
+      );
+    },
+
+    selectMusicCandidate(entryId: string, candidateId: string): Promise<EditableMusic> {
+      return musicRequest(
+        `/api/v1/entries/${entryId}/music/recognition/selection`,
+        "Could not select the music match",
+        {
+          method: "POST",
+          headers: { accept: "application/json", "content-type": "application/json" },
+          body: JSON.stringify({ candidateId }),
+        },
+      );
+    },
+
     mediaDisplayUrl(mediaId: string): string {
       return `/api/v1/media/${encodeURIComponent(mediaId)}/display`;
     },
   };
+
+  async function musicRequest(
+    path: string,
+    message: string,
+    init: RequestInit,
+  ): Promise<EditableMusic> {
+    const response = await request(path, init);
+    if (!response.ok) throw new Error(`${message} (${response.status}).`);
+    return (await response.json()) as EditableMusic;
+  }
 }
 
 export const api = createApiClient();

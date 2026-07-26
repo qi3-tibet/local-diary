@@ -11,10 +11,13 @@ import { SearchPanel } from "../search/SearchPanel";
 import { ThemeControl } from "../theme/ThemeControl";
 import { createThemeStore } from "../theme/theme-store";
 import { TrashPanel } from "../trash/TrashPanel";
+import { FloatingPlayer } from "../music/FloatingPlayer";
+import { getBrowserPlayerStore } from "../music/player-store";
 
 type View = "diary" | "editor" | "search" | "trash";
 
 export function App() {
+  const [player] = useState(getBrowserPlayerStore);
   const queryClient = useQueryClient();
   const [view, setView] = useState<View>("diary");
   const [editingEntry, setEditingEntry] = useState<Entry>();
@@ -61,6 +64,10 @@ export function App() {
       setActiveDay(days[0]);
     }
   }, [activeDay, days]);
+
+  useEffect(() => {
+    if (activeDay) player.getState().setVisibleDay(activeDay);
+  }, [activeDay, player]);
 
   useEffect(() => {
     if (!draftRecoveryQuery.isSuccess || checkedDraftRecovery.current) return;
@@ -166,6 +173,7 @@ export function App() {
         onActiveDayChange={setActiveDay}
         onEditEntry={editEntry}
         onTrashEntry={(entry) => void trashFromTimeline(entry)}
+        player={player}
       />
     );
   }
@@ -202,6 +210,7 @@ export function App() {
         ) : null}
         {content}
       </div>
+      <FloatingPlayer player={player} />
     </div>
   );
 }

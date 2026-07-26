@@ -1,11 +1,19 @@
-import type { DraftInput, Entry } from "@diary/contracts";
+import type {
+  DraftInput,
+  Entry,
+  EntryMusic,
+  MusicMetadataOverride,
+  RecognitionCandidate,
+} from "@diary/contracts";
 import { useQuery } from "@tanstack/react-query";
 import { type FormEvent, useRef, useState } from "react";
-import { api } from "../api/client";
+import { api, type EditableMusic } from "../api/client";
 import { DiaryMarkdown } from "../diary/EntryBody";
 import { ImageInsert } from "./ImageInsert";
 import { insertAtSelection } from "./insert-at-selection";
 import { ModeGlyph } from "./ModeGlyph";
+import { MusicAttach } from "./MusicAttach";
+import { MusicMetadataEditor } from "./MusicMetadataEditor";
 import {
   transformSelectionAfterReplacement,
   transformUploadAnchor,
@@ -29,13 +37,25 @@ type EditorProps = {
 type EditorFormProps = EditorProps & {
   initialValue: DraftInput;
   draftId?: string;
+  initialMusic?: EntryMusic | null;
 };
 
-function EditorForm({ entry, initialValue, draftId, onCancel, onComplete }: EditorFormProps) {
+function EditorForm({
+  entry,
+  initialValue,
+  draftId,
+  initialMusic,
+  onCancel,
+  onComplete,
+}: EditorFormProps) {
   const [value, setValue] = useState(initialValue);
   const [preview, setPreview] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [musicBusy, setMusicBusy] = useState(false);
+  const [music, setMusic] = useState<EditableMusic | EntryMusic | null>(initialMusic ?? null);
+  const [musicCandidates, setMusicCandidates] = useState<RecognitionCandidate[]>([]);
+  const [musicError, setMusicError] = useState<string>();
   const [error, setError] = useState<string>();
   const textarea = useRef<HTMLTextAreaElement>(null);
   const uploadEntryId = useRef(entry?.id ?? draftId);
@@ -48,6 +68,7 @@ function EditorForm({ entry, initialValue, draftId, onCancel, onComplete }: Edit
   } | null>(null);
   const pendingInputRange = useRef<TextRange | null>(null);
   const pendingUpload = useRef<Promise<void> | null>(null);
+  const pendingMusic = useRef<Promise<void> | null>(null);
   const isDraft = !entry;
 
   const draftPersistence = useSilentDraft(value, api.saveDraft, isDraft && !submitting);
@@ -122,6 +143,96 @@ function EditorForm({ entry, initialValue, draftId, onCancel, onComplete }: Edit
     return operation;
   }
 
+  function coordinateMusic(work: () => Promise<void>): Promise<void> {
+    let operation!: Promise<void>;
+    operation = (async () => {
+      setMusicBusy(true);
+      setMusicError(undefined);
+      try {
+        await work();
+      } finally {
+        if (pendingMusic.current === operation) {
+          pendingMusic.current = null;
+          setMusicBusy(false);
+        }
+      }
+    })();
+    pendingMusic.current = operation;
+    return operation;
+  }
+
+  function selectMusic(file: File): Promise<void> {
+    return coordinateMusic(async () => {
+      const entryId = uploadEntryId.current
+        ?? (await api.saveDraft(latestValue.current)).id;
+      uploadEntryId.current = entryId;
+      const attached = await api.uploadMusic(entryId, file);
+      const withFilename = {
+        ...attached,
+        originalFilename: attached.originalFilename ?? file.name,
+      };
+      setMusic(withFilename);
+      try {
+        const recognized = await api.recognizeMusic(entryId);
+        setMusic({ ...withFilename, ...recognized });
+        setMusicCandidates(recognized.candidates ?? []);
+      } catch {
+        setMusicError("MUSIC RECOGNITION IS UNAVAILABLE");
+      }
+    }).catch(() => {
+      setMusicError("THE MP3 COULD NOT BE ATTACHED");
+    });
+  }
+
+  function saveMusicMetadata(overrides: MusicMetadataOverride): Promise<void> {
+    return coordinateMusic(async () => {
+      const entryId = uploadEntryId.current;
+      if (!entryId) return;
+      const updated = await api.patchMusicMetadata(entryId, overrides);
+      setMusic((current) => current ? { ...current, ...updated } : updated);
+      setMusicCandidates(updated.candidates ?? []);
+    }).catch(() => {
+      setMusicError("MUSIC METADATA COULD NOT BE SAVED");
+    });
+  }
+
+  function selectMusicCandidate(candidateId: string): Promise<void> {
+    return coordinateMusic(async () => {
+      const entryId = uploadEntryId.current;
+      if (!entryId) return;
+      const updated = await api.selectMusicCandidate(entryId, candidateId);
+      setMusic((current) => current ? { ...current, ...updated } : updated);
+      setMusicCandidates([]);
+    }).catch(() => {
+      setMusicError("THE MUSIC MATCH COULD NOT BE USED");
+    });
+  }
+
+  function replaceMusicCover(file: File): Promise<void> {
+    return coordinateMusic(async () => {
+      const entryId = uploadEntryId.current;
+      if (!entryId) return;
+      const cover = await api.uploadImage(entryId, file);
+      const updated = await api.patchMusicMetadata(entryId, { coverMediaId: cover.mediaId });
+      setMusic((current) => current ? { ...current, ...updated } : updated);
+      setMusicCandidates(updated.candidates ?? []);
+    }).catch(() => {
+      setMusicError("THE COVER COULD NOT BE REPLACED");
+    });
+  }
+
+  function recognizeAgain(): Promise<void> {
+    return coordinateMusic(async () => {
+      const entryId = uploadEntryId.current;
+      if (!entryId) return;
+      const recognized = await api.recognizeMusic(entryId);
+      setMusic((current) => current ? { ...current, ...recognized } : recognized);
+      setMusicCandidates(recognized.candidates ?? []);
+    }).catch(() => {
+      setMusicError("MUSIC RECOGNITION IS UNAVAILABLE");
+    });
+  }
+
   function changeTitle(title: string): void {
     const nextValue = { ...latestValue.current, title };
     latestValue.current = nextValue;
@@ -173,7 +284,7 @@ function EditorForm({ entry, initialValue, draftId, onCancel, onComplete }: Edit
     setSubmitting(true);
     setError(undefined);
     try {
-      await pendingUpload.current;
+      await Promise.all([pendingUpload.current, pendingMusic.current]);
       const finalValue = latestValue.current;
       const completed = entry
         ? await api.updateEntry(entry.id, finalValue)
@@ -186,7 +297,7 @@ function EditorForm({ entry, initialValue, draftId, onCancel, onComplete }: Edit
     }
   }
 
-  const busy = uploading || submitting;
+  const busy = uploading || musicBusy || submitting;
 
   function cancel(): void {
     if (busy) return;
@@ -214,6 +325,9 @@ function EditorForm({ entry, initialValue, draftId, onCancel, onComplete }: Edit
           </label>
           <div className="editor-glyphs">
             {!preview ? <ImageInsert disabled={submitting} onSelect={selectImage} /> : null}
+            {!preview && !music ? (
+              <MusicAttach disabled={submitting || musicBusy} onSelect={selectMusic} />
+            ) : null}
             <ModeGlyph preview={preview} onToggle={() => setPreview((current) => !current)} />
           </div>
         </div>
@@ -244,6 +358,18 @@ function EditorForm({ entry, initialValue, draftId, onCancel, onComplete }: Edit
           </label>
         )}
 
+        {music ? (
+          <MusicMetadataEditor
+            metadata={music}
+            candidates={musicCandidates}
+            busy={musicBusy || submitting}
+            onSave={saveMusicMetadata}
+            onSelectCandidate={selectMusicCandidate}
+            onCoverSelect={replaceMusicCover}
+            onRecognize={recognizeAgain}
+          />
+        ) : null}
+        {musicError ? <p className="editor-error" role="alert">{musicError}</p> : null}
         {error ? <p className="editor-error" role="alert">{error}</p> : null}
         <div className="editor-actions">
           <button type="button" disabled={busy} onClick={cancel}>CANCEL</button>
@@ -272,6 +398,7 @@ export function Editor(props: EditorProps) {
           markdown: props.entry.markdown,
           tags: props.entry.tags,
         }}
+        initialMusic={props.entry.music}
       />
     );
   }
@@ -295,6 +422,7 @@ export function Editor(props: EditorProps) {
       key={draft?.id ?? "new-draft"}
       initialValue={draft ?? emptyDraft}
       draftId={draft?.id}
+      initialMusic={draft?.music}
     />
   );
 }

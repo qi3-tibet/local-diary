@@ -1,12 +1,15 @@
 import type { Entry } from "@diary/contracts";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import { api } from "../api/client";
+import { MusicCard } from "../music/MusicCard";
+import type { PlayerStore } from "../music/player-store";
 import { formatEntryTime } from "./date-groups";
 
 type EntryBodyProps = {
   entry: Entry;
   onEdit?(entry: Entry): void;
   onTrash?(entry: Entry): void;
+  player?: PlayerStore;
 };
 
 export function DiaryMarkdown({ children }: { children: string }) {
@@ -32,7 +35,7 @@ export function DiaryMarkdown({ children }: { children: string }) {
   );
 }
 
-export function EntryBody({ entry, onEdit, onTrash }: EntryBodyProps) {
+export function EntryBody({ entry, onEdit, onTrash, player }: EntryBodyProps) {
   if (!entry.publishedAt) return null;
 
   return (
@@ -42,6 +45,7 @@ export function EntryBody({ entry, onEdit, onTrash }: EntryBodyProps) {
       </time>
       <div className="entry-body">
         <DiaryMarkdown>{entry.markdown}</DiaryMarkdown>
+        {entry.music ? <MusicCard music={entry.music} player={player} /> : null}
       </div>
       {onEdit || onTrash ? (
         <div className="entry-actions">

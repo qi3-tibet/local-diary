@@ -2,12 +2,14 @@ import type { Entry } from "@diary/contracts";
 import { useEffect, useRef } from "react";
 import { EntryBody } from "./EntryBody";
 import { formatEnglishDayMeta, groupEntriesByBeijingDay } from "./date-groups";
+import type { PlayerStore } from "../music/player-store";
 
 type TimelineProps = {
   entries: Entry[];
   onActiveDayChange?: (day: string) => void;
   onEditEntry?: (entry: Entry) => void;
   onTrashEntry?: (entry: Entry) => void;
+  player?: PlayerStore;
 };
 
 export function Timeline({
@@ -15,6 +17,7 @@ export function Timeline({
   onActiveDayChange,
   onEditEntry,
   onTrashEntry,
+  player,
 }: TimelineProps) {
   const groups = groupEntriesByBeijingDay(entries);
   const observedDays = groups.map(({ day }) => day).join("|");
@@ -64,6 +67,7 @@ export function Timeline({
               key={entry.id}
               onEdit={onEditEntry}
               onTrash={onTrashEntry}
+              player={player}
             />
           ))}
         </section>

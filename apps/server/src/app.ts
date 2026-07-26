@@ -9,6 +9,7 @@ import { createBeijingClock, type BeijingClock } from "./time/beijing.js";
 import { ImageService } from "./media/images.js";
 import { registerMediaRoutes } from "./media/routes.js";
 import { MediaStore } from "./media/store.js";
+import { registerMusicStreamRoute } from "./media/stream-route.js";
 import { MusicService } from "./music/service.js";
 import { registerMusicRoutes } from "./music/routes.js";
 import { createAcoustIdFingerprintLookup } from "./music/recognition/fingerprint.js";
@@ -32,12 +33,12 @@ export function buildServer(options: ServerOptions = {}) {
   const server = Fastify({ logger: false });
   const dataRoot = path.resolve(options.dataRoot ?? "data");
   const database = options.database ?? createDiaryDatabase(dataRoot);
-  const entries = new EntryRepository(database);
+  const mediaStore = new MediaStore(path.join(dataRoot, "media"));
+  const entries = new EntryRepository(database, mediaStore);
   const service = new EntryService(
     entries,
     options.clock ?? createBeijingClock(),
   );
-  const mediaStore = new MediaStore(path.join(dataRoot, "media"));
   const images = new ImageService(database, mediaStore);
   const music = new MusicService(database, mediaStore);
   const recognition = new MusicRecognitionService(
@@ -53,6 +54,7 @@ export function buildServer(options: ServerOptions = {}) {
   void registerSearchRoutes(server, entries);
   void registerMediaRoutes(server, images);
   void registerMusicRoutes(server, music, recognition, options.musicUploadLimit);
+  void registerMusicStreamRoute(server, database, mediaStore);
   server.addHook("onClose", async () => database.close());
 
   return server;

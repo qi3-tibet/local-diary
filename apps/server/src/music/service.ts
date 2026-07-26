@@ -9,6 +9,7 @@ export type AttachedMusic = Omit<MusicMetadata, "coverBytes"> & {
   originalPath: string;
   coverMediaId: string | null;
   coverPath: string | null;
+  originalFilename: string;
 };
 
 export class MusicEntryNotFoundError extends Error {
@@ -126,6 +127,7 @@ export class MusicService {
         coverMediaId: coverId,
         coverPath: coverStored?.path ?? null,
         recognitionStatus: metadata.recognitionStatus,
+        originalFilename: filename,
       };
     } catch (error) {
       if (!coverStored) await this.removeUnreferenced([original]);

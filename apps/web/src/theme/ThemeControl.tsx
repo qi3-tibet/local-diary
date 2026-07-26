@@ -22,7 +22,6 @@ export function ThemeControl({ preference, onChange }: ThemeControlProps) {
       onClick={() => onChange(nextPreference[preference])}
     >
       <span className="theme-mark" aria-hidden="true" />
-      <span>{preference.toUpperCase()}</span>
     </button>
   );
 }

@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { draftInputSchema, type DraftInput, type Entry } from "@diary/contracts";
+import { closeSync, openSync, readSync, statSync } from "node:fs";
+import {
+  draftInputSchema,
+  type DraftInput,
+  type Entry,
+  type EntryMusic,
+} from "@diary/contracts";
 import type { DiaryDatabase } from "../db/client.js";
+import type { MediaStore } from "../media/store.js";
 
 type EntryRow = {
   id: string;
@@ -15,7 +22,10 @@ type EntryRow = {
 };
 
 export class EntryRepository {
-  constructor(private readonly db: DiaryDatabase) {}
+  constructor(
+    private readonly db: DiaryDatabase,
+    private readonly mediaStore?: MediaStore,
+  ) {}
 
   saveDraft(input: DraftInput): Entry {
     const value = draftInputSchema.parse(input);
@@ -263,7 +273,71 @@ export class EntryRepository {
       deletedAt: row.deleted_at,
       edited: row.edited_at !== null,
       tags: tags.map((tag) => tag.name),
+      music: this.musicForEntry(row.id),
     };
+  }
+
+  private musicForEntry(entryId: string): EntryMusic | null {
+    const row = this.db.prepare(`
+      SELECT
+        entry_music.media_id, entry_music.title, entry_music.artist, entry_music.album,
+        entry_music.year, entry_music.cover_media_id, entry_music.recognition_status,
+        entry_music.user_overrides_json, entry_music.original_filename,
+        media.original_hash, media.original_mime, media.original_extension
+      FROM entry_music
+      INNER JOIN media
+        ON media.id = entry_music.media_id
+        AND media.entry_id = entry_music.entry_id
+      WHERE entry_music.entry_id = ?
+    `).get(entryId) as {
+      media_id: string;
+      title: string | null;
+      artist: string | null;
+      album: string | null;
+      year: number | null;
+      cover_media_id: string | null;
+      recognition_status: EntryMusic["recognitionStatus"];
+      user_overrides_json: string;
+      original_filename: string;
+      original_hash: string;
+      original_mime: string;
+      original_extension: string;
+    } | undefined;
+    if (!row) return null;
+
+    const overrides = parseMusicOverrides(row.user_overrides_json);
+    const coverMediaId = overridden(overrides, "coverMediaId", row.cover_media_id);
+    return {
+      mediaId: row.media_id,
+      title: overridden(overrides, "title", row.title),
+      artist: overridden(overrides, "artist", row.artist),
+      album: overridden(overrides, "album", row.album),
+      year: overridden(overrides, "year", row.year),
+      coverMediaId,
+      coverMime: coverMediaId ? this.coverMime(coverMediaId, entryId) : null,
+      recognitionStatus: row.recognition_status,
+      originalFilename: row.original_filename,
+      streamUrl: `/api/v1/music/${encodeURIComponent(row.media_id)}/stream`,
+      coverUrl: coverMediaId
+        ? `/api/v1/media/${encodeURIComponent(coverMediaId)}/display`
+        : null,
+      available: this.mediaStore
+        ? isStoredMp3Available(
+            this.mediaStore,
+            row.original_hash,
+            row.original_mime,
+            row.original_extension,
+          )
+        : false,
+    };
+  }
+
+  private coverMime(mediaId: string, entryId: string): string | null {
+    const cover = this.db.prepare(`
+      SELECT original_mime FROM media
+      WHERE id = ? AND entry_id = ? AND original_mime LIKE 'image/%'
+    `).get(mediaId, entryId) as { original_mime: string } | undefined;
+    return cover?.original_mime ?? null;
   }
 }
 
@@ -271,18 +345,70 @@ function parseMusicOverrides(value: string): {
   title?: string | null;
   artist?: string | null;
   album?: string | null;
+  year?: number | null;
+  coverMediaId?: string | null;
 } {
   try {
     const parsed: unknown = JSON.parse(value);
     if (typeof parsed !== "object" || parsed === null) return {};
     const record = parsed as Record<string, unknown>;
-    const overrides: { title?: string | null; artist?: string | null; album?: string | null } = {};
+    const overrides: {
+      title?: string | null;
+      artist?: string | null;
+      album?: string | null;
+      year?: number | null;
+      coverMediaId?: string | null;
+    } = {};
     for (const key of ["title", "artist", "album"] as const) {
       if (record[key] === null || typeof record[key] === "string") overrides[key] = record[key];
+    }
+    if (record.year === null || Number.isInteger(record.year)) {
+      overrides.year = record.year as number | null;
+    }
+    if (record.coverMediaId === null || typeof record.coverMediaId === "string") {
+      overrides.coverMediaId = record.coverMediaId;
     }
     return overrides;
   } catch {
     return {};
+  }
+}
+
+function overridden<TValue>(
+  overrides: object,
+  key: string,
+  fallback: TValue,
+): TValue {
+  return Object.prototype.hasOwnProperty.call(overrides, key)
+    ? (overrides as Record<string, TValue>)[key]!
+    : fallback;
+}
+
+function isStoredMp3Available(
+  store: MediaStore,
+  hash: string,
+  mime: string,
+  extension: string,
+): boolean {
+  if (
+    !/^[a-f0-9]{64}$/.test(hash)
+    || mime !== "audio/mpeg"
+    || extension !== "mp3"
+  ) return false;
+
+  let descriptor: number | undefined;
+  try {
+    const objectPath = store.pathFor(hash, extension);
+    if (!statSync(objectPath).isFile()) return false;
+    descriptor = openSync(objectPath, "r");
+    const header = Buffer.alloc(3);
+    if (readSync(descriptor, header, 0, header.length, 0) < 3) return false;
+    return header.toString("ascii") === "ID3"
+      || (header[0] === 0xff && (header[1] & 0xe0) === 0xe0);
+  } catch {
+    return false;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 

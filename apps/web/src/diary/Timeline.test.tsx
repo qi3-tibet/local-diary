@@ -19,6 +19,7 @@ const entriesForTwoDays: Entry[] = [
     deletedAt: null,
     edited: false,
     tags: ["散步"],
+    music: null,
   },
   {
     id: "morning-note",
@@ -31,6 +32,7 @@ const entriesForTwoDays: Entry[] = [
     deletedAt: null,
     edited: false,
     tags: [],
+    music: null,
   },
   {
     id: "finished-book",
@@ -43,6 +45,7 @@ const entriesForTwoDays: Entry[] = [
     deletedAt: null,
     edited: false,
     tags: ["阅读"],
+    music: null,
   },
 ];
 

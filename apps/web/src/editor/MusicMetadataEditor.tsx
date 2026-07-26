@@ -2,7 +2,7 @@ import type {
   MusicMetadataOverride,
   RecognitionCandidate,
 } from "@diary/contracts";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type EditableMusicMetadata = MusicMetadataOverride & {
   recognitionStatus: "embedded" | "manual_required" | "candidates" | "recognized" | "manual";
@@ -15,6 +15,7 @@ type MusicMetadataEditorProps = {
   onSave(overrides: MusicMetadataOverride): void | Promise<void>;
   onSelectCandidate(candidateId: string): void | Promise<void>;
   onCoverSelect(file: File): void | Promise<void>;
+  onRecognize?(): void | Promise<void>;
 };
 
 export function MusicMetadataEditor({
@@ -24,6 +25,7 @@ export function MusicMetadataEditor({
   onSave,
   onSelectCandidate,
   onCoverSelect,
+  onRecognize,
 }: MusicMetadataEditorProps) {
   const [title, setTitle] = useState(metadata.title ?? "");
   const [artist, setArtist] = useState(metadata.artist ?? "");
@@ -38,8 +40,7 @@ export function MusicMetadataEditor({
     setYear(metadata.year?.toString() ?? "");
   }, [metadata.album, metadata.artist, metadata.title, metadata.year]);
 
-  function submit(event: FormEvent<HTMLFormElement>): void {
-    event.preventDefault();
+  function submit(): void {
     void onSave({
       title: nullable(title),
       artist: nullable(artist),
@@ -79,7 +80,7 @@ export function MusicMetadataEditor({
         </div>
       ) : null}
 
-      <form className="music-metadata-form" onSubmit={submit}>
+      <div className="music-metadata-form">
         <label>
           <span>SONG TITLE</span>
           <input
@@ -141,11 +142,26 @@ export function MusicMetadataEditor({
           >
             REPLACE COVER
           </button>
-          <button type="submit" disabled={busy} aria-label="Save music metadata">
+          {onRecognize ? (
+            <button
+              type="button"
+              disabled={busy}
+              aria-label="Recognize music"
+              onClick={() => void onRecognize()}
+            >
+              RECOGNIZE
+            </button>
+          ) : null}
+          <button
+            type="button"
+            disabled={busy}
+            aria-label="Save music metadata"
+            onClick={submit}
+          >
             SAVE
           </button>
         </div>
-      </form>
+      </div>
     </section>
   );
 }

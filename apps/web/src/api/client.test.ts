@@ -133,4 +133,48 @@ describe("diary API client", () => {
       "/api/v1/media/image%20%2F%201/display",
     );
   });
+
+  it("uploads music and supports recognition plus manual correction", async () => {
+    const metadata = {
+      mediaId: "00000000-0000-4000-8000-000000000001",
+      title: "Pink + White",
+      artist: "Frank Ocean",
+      album: "Blonde",
+      year: 2016,
+      coverMediaId: null,
+      coverMime: null,
+      recognitionStatus: "embedded",
+      originalFilename: "song.mp3",
+    };
+    const recognized = { ...metadata, recognitionStatus: "candidates", candidates: [] };
+    const corrected = { ...metadata, artist: "Corrected", recognitionStatus: "manual", candidates: [] };
+    const request = vi
+      .fn<RequestFn>()
+      .mockResolvedValueOnce(new Response(JSON.stringify(metadata), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(recognized), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(corrected), { status: 200 }));
+    const client = createApiClient(request);
+    const file = new File(["mp3"], "song.mp3", { type: "audio/mpeg" });
+
+    await expect(client.uploadMusic("entry-1", file)).resolves.toEqual(metadata);
+    await expect(client.recognizeMusic("entry-1")).resolves.toEqual(recognized);
+    await expect(client.patchMusicMetadata("entry-1", { artist: "Corrected" }))
+      .resolves.toEqual(corrected);
+
+    expect(request.mock.calls[0]?.[0]).toBe("/api/v1/entries/entry-1/music");
+    expect(request.mock.calls[0]?.[1]).toMatchObject({ method: "POST" });
+    expect((request.mock.calls[0]?.[1]?.body as FormData).get("music")).toBe(file);
+    expect(request.mock.calls[1]).toEqual([
+      "/api/v1/entries/entry-1/music/recognition",
+      { method: "POST", headers: { accept: "application/json" } },
+    ]);
+    expect(request.mock.calls[2]).toEqual([
+      "/api/v1/entries/entry-1/music/metadata",
+      {
+        method: "PATCH",
+        headers: { accept: "application/json", "content-type": "application/json" },
+        body: JSON.stringify({ artist: "Corrected" }),
+      },
+    ]);
+  });
 });

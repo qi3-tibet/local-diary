@@ -20,6 +20,7 @@ export type Entry = {
   deletedAt: string | null;
   edited: boolean;
   tags: string[];
+  music: EntryMusic | null;
 };
 
 export const musicMetadataSchema = z.object({
@@ -34,6 +35,13 @@ export const musicMetadataSchema = z.object({
 });
 
 export type MusicMetadata = z.infer<typeof musicMetadataSchema>;
+
+export type EntryMusic = MusicMetadata & {
+  originalFilename: string;
+  streamUrl: string;
+  coverUrl: string | null;
+  available: boolean;
+};
 
 export const recognitionCandidateSchema = z.object({
   id: z.string().min(1).max(200),

@@ -135,6 +135,7 @@ function toResponse(attached: Awaited<ReturnType<MusicService["attach"]>>) {
     coverMediaId: attached.coverMediaId,
     coverMime: attached.coverMime,
     recognitionStatus: attached.recognitionStatus,
+    originalFilename: attached.originalFilename,
   };
 }
 
