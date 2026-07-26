@@ -20,19 +20,34 @@ export async function verifyBundledBinaries(options = {}) {
   return report;
 }
 
-async function verifyFpcalc(executable, expected) {
+export async function verifyFpcalc(executable, expected, runner = execute) {
+  if (
+    expected.platform !== "windows"
+    || expected.architecture !== "x86_64"
+    || !expected.sourceUrl.startsWith("https://github.com/acoustid/chromaprint/releases/download/")
+    || !/^[0-9a-f]{64}$/.test(expected.archiveSha256)
+    || !Number.isSafeInteger(expected.sizeBytes)
+    || expected.sizeBytes <= 0
+    || !/^[0-9a-f]{64}$/.test(expected.sha256)
+    || !expected.versionOutput.startsWith(`fpcalc version ${expected.version}`)
+  ) {
+    throw new Error("fpcalc manifest trust check failed");
+  }
   const bytes = await readFile(executable);
+  if (bytes.byteLength !== expected.sizeBytes) {
+    throw new Error(`fpcalc size mismatch at ${executable}`);
+  }
   const checksum = createHash("sha256").update(bytes).digest("hex");
-  const { stdout, stderr } = await execute(executable, ["-version"], {
+  if (checksum !== expected.sha256) {
+    throw new Error(`fpcalc checksum mismatch at ${executable}`);
+  }
+  const { stdout, stderr } = await runner(executable, ["-version"], {
     encoding: "utf8",
     windowsHide: true,
     timeout: 10_000,
     maxBuffer: 64 * 1024,
   });
   const version = `${stdout}${stderr}`.trim();
-  if (checksum !== expected.sha256) {
-    throw new Error(`fpcalc checksum mismatch at ${executable}`);
-  }
   if (version !== expected.versionOutput || !version.startsWith(`fpcalc version ${expected.version}`)) {
     throw new Error(`fpcalc version mismatch at ${executable}: ${version}`);
   }

@@ -22,6 +22,51 @@ $links = @(
   (Join-Path $programs "Local Diary - Browser.lnk")
 )
 
+function Get-ShortcutDetails([string]$ShortcutPath) {
+  $shortcutShell = New-Object -ComObject WScript.Shell
+  $shortcut = $shortcutShell.CreateShortcut($ShortcutPath)
+  return [pscustomobject]@{
+    TargetPath = $shortcut.TargetPath
+    Arguments = $shortcut.Arguments
+  }
+}
+
+function Test-SmokeShortcutMatches($Details, [string]$ExpectedTarget, [string]$ExpectedArguments) {
+  if ($null -eq $Details -or [string]::IsNullOrWhiteSpace($Details.TargetPath)) {
+    return $false
+  }
+  return (
+    [string]::Equals(
+      [System.IO.Path]::GetFullPath($Details.TargetPath),
+      [System.IO.Path]::GetFullPath($ExpectedTarget),
+      [System.StringComparison]::OrdinalIgnoreCase
+    ) -and
+    $Details.Arguments -ceq $ExpectedArguments
+  )
+}
+
+function Test-AllExistingShortcutsOwned([string[]]$ShortcutPaths, [string]$ExpectedTarget) {
+  if ([string]::IsNullOrWhiteSpace($ExpectedTarget)) {
+    return $false
+  }
+  for ($index = 0; $index -lt $ShortcutPaths.Count; $index++) {
+    $shortcutPath = $ShortcutPaths[$index]
+    if (-not (Test-Path -LiteralPath $shortcutPath)) {
+      continue
+    }
+    $expectedArguments = if ($index -in @(1, 3)) { "--browser" } else { "" }
+    try {
+      $details = Get-ShortcutDetails $shortcutPath
+      if (-not (Test-SmokeShortcutMatches $details $ExpectedTarget $expectedArguments)) {
+        return $false
+      }
+    } catch {
+      return $false
+    }
+  }
+  return $true
+}
+
 $existing = @($links | Where-Object { Test-Path -LiteralPath $_ })
 if ($existing.Count -gt 0) {
   throw "Installer smoke will not overwrite existing Local Diary shortcuts: $($existing -join ', ')"
@@ -41,6 +86,8 @@ $probe = Join-Path $retention "preserve-me.txt"
 $defaultProbeToken = [Guid]::NewGuid().ToString("N")
 $defaultProbe = Join-Path $defaultUserData ".installer-smoke-ownership"
 $ownedDefaultUserData = $false
+$ownedInstallRoot = $false
+$installedApp = $null
 $uninstaller = $null
 $uninstallCompleted = $false
 
@@ -49,6 +96,7 @@ try {
   if ($installProcess.ExitCode -ne 0) {
     throw "Installer returned exit code $($installProcess.ExitCode)."
   }
+  $ownedInstallRoot = $true
   $installedApp = Join-Path $install "Local Diary.exe"
   $uninstaller = Join-Path $install "Uninstall Local Diary.exe"
   if (-not (Test-Path -LiteralPath $installedApp) -or -not (Test-Path -LiteralPath $uninstaller)) {
@@ -63,15 +111,17 @@ try {
     }
   }
 
-  $shell = New-Object -ComObject WScript.Shell
-  $desktopShortcut = $shell.CreateShortcut($links[0])
-  $browserShortcut = $shell.CreateShortcut($links[1])
-  $startBrowserShortcut = $shell.CreateShortcut($links[3])
-  if ([System.IO.Path]::GetFullPath($desktopShortcut.TargetPath) -ne $installedApp) {
-    throw "Desktop shortcut target is incorrect."
+  $desktopShortcut = Get-ShortcutDetails $links[0]
+  $browserShortcut = Get-ShortcutDetails $links[1]
+  $startMenuShortcut = Get-ShortcutDetails $links[2]
+  $startMenuBrowserShortcut = Get-ShortcutDetails $links[3]
+  foreach ($shortcut in @($desktopShortcut, $startMenuShortcut)) {
+    if (-not (Test-SmokeShortcutMatches $shortcut $installedApp "")) {
+      throw "Ordinary shortcut target or arguments are incorrect."
+    }
   }
-  foreach ($shortcut in @($browserShortcut, $startBrowserShortcut)) {
-    if ([System.IO.Path]::GetFullPath($shortcut.TargetPath) -ne $installedApp -or $shortcut.Arguments -ne "--browser") {
+  foreach ($shortcut in @($browserShortcut, $startMenuBrowserShortcut)) {
+    if (-not (Test-SmokeShortcutMatches $shortcut $installedApp "--browser")) {
       throw "Browser shortcut target or arguments are incorrect."
     }
   }
@@ -101,26 +151,48 @@ try {
     installRoot = $install
     desktopShortcut = @{ target = $desktopShortcut.TargetPath; arguments = $desktopShortcut.Arguments }
     browserShortcut = @{ target = $browserShortcut.TargetPath; arguments = $browserShortcut.Arguments }
-    startMenuBrowserShortcut = @{ target = $startBrowserShortcut.TargetPath; arguments = $startBrowserShortcut.Arguments }
+    startMenuShortcut = @{ target = $startMenuShortcut.TargetPath; arguments = $startMenuShortcut.Arguments }
+    startMenuBrowserShortcut = @{ target = $startMenuBrowserShortcut.TargetPath; arguments = $startMenuBrowserShortcut.Arguments }
     uninstallRemovedShortcuts = $true
     uninstallPreservedExternalData = $true
     uninstallPreservedDefaultUserData = $true
   } | ConvertTo-Json -Depth 4
 } finally {
+  $allExistingShortcutsOwned = (
+    $ownedInstallRoot -and
+    (Test-AllExistingShortcutsOwned $links $installedApp)
+  )
   if (
     -not $uninstallCompleted -and
     $null -ne $uninstaller -and
     (Test-Path -LiteralPath $uninstaller)
   ) {
-    try {
-      Start-Process -FilePath $uninstaller -ArgumentList "/S" -PassThru -Wait -WindowStyle Hidden | Out-Null
-    } catch {
-      Write-Warning "Best-effort uninstall after smoke failure did not complete: $_"
+    if ($allExistingShortcutsOwned) {
+      try {
+        Start-Process -FilePath $uninstaller -ArgumentList "/S" -PassThru -Wait -WindowStyle Hidden | Out-Null
+      } catch {
+        Write-Warning "Best-effort uninstall after smoke failure did not complete: $_"
+      }
+    } else {
+      Write-Warning "Shortcut ownership changed or cannot be proven; skipping best-effort uninstall and preserving the installation."
     }
   }
   foreach ($link in $links) {
     if (Test-Path -LiteralPath $link) {
-      Remove-Item -LiteralPath $link -Force
+      $expectedArguments = if ($link -eq $links[1] -or $link -eq $links[3]) { "--browser" } else { "" }
+      try {
+        $currentShortcut = Get-ShortcutDetails $link
+        if (
+          $null -ne $installedApp -and
+          (Test-SmokeShortcutMatches $currentShortcut $installedApp $expectedArguments)
+        ) {
+          Remove-Item -LiteralPath $link -Force
+        } else {
+          Write-Warning "Installer smoke does not own shortcut; preserving: $link"
+        }
+      } catch {
+        Write-Warning "Could not revalidate installer-smoke shortcut ownership; preserving $link`: $_"
+      }
     }
   }
   $defaultRootOwnedAtCleanup = $false

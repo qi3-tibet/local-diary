@@ -1,15 +1,43 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { releaseArtifactNames } from "../scripts/release-checksums.mjs";
+import { verifyFpcalc } from "../scripts/verify-binaries.mjs";
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const assetsRoot = path.join(desktopRoot, "assets");
 
 describe("pinned release resources", () => {
+  it("never executes an fpcalc candidate whose checksum is not trusted", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "local-diary-fpcalc-trust-"));
+    const executable = path.join(root, "fpcalc.exe");
+    writeFileSync(executable, "tampered");
+    const runner = vi.fn(async () => ({
+      stdout: "fpcalc version 1.6.0",
+      stderr: "",
+    }));
+
+    try {
+      await expect(verifyFpcalc(executable, {
+        version: "1.6.0",
+        platform: "windows",
+        architecture: "x86_64",
+        sourceUrl: "https://github.com/acoustid/chromaprint/releases/download/v1.6.0/chromaprint-fpcalc-1.6.0-windows-x86_64.zip",
+        archiveSha256: "30179d3d0dc4cc92f1a0995c1a2e523fb4867724c2ee6a6ceae474f8e4d6937a",
+        sizeBytes: 8,
+        sha256: "0".repeat(64),
+        versionOutput: "fpcalc version 1.6.0",
+      }, runner)).rejects.toThrow("checksum mismatch");
+      expect(runner).not.toHaveBeenCalled();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("checksums only distributable release artifacts", () => {
     expect(releaseArtifactNames([
       "builder-debug.yml",
@@ -33,17 +61,14 @@ describe("pinned release resources", () => {
         architecture: string;
         sourceUrl: string;
         archiveSha256: string;
+        sizeBytes: number;
         sha256: string;
         versionOutput: string;
       };
     };
     const executable = path.join(assetsRoot, "fpcalc.exe");
-    const checksum = createHash("sha256").update(readFileSync(executable)).digest("hex");
-    const version = execFileSync(executable, ["-version"], {
-      encoding: "utf8",
-      windowsHide: true,
-      timeout: 10_000,
-    }).trim();
+    const bytes = readFileSync(executable);
+    const checksum = createHash("sha256").update(bytes).digest("hex");
 
     expect(manifest.fpcalc).toMatchObject({
       version: "1.6.0",
@@ -52,8 +77,16 @@ describe("pinned release resources", () => {
       sourceUrl:
         "https://github.com/acoustid/chromaprint/releases/download/v1.6.0/chromaprint-fpcalc-1.6.0-windows-x86_64.zip",
       archiveSha256: "30179d3d0dc4cc92f1a0995c1a2e523fb4867724c2ee6a6ceae474f8e4d6937a",
+      sizeBytes: 4_144_640,
     });
+    expect(bytes.byteLength).toBe(manifest.fpcalc.sizeBytes);
     expect(checksum).toBe(manifest.fpcalc.sha256);
+
+    const version = execFileSync(executable, ["-version"], {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 10_000,
+    }).trim();
     expect(version).toBe(manifest.fpcalc.versionOutput);
     expect(version).toMatch(/^fpcalc version 1\.6\.0(?:\s|$)/);
   });

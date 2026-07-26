@@ -5,6 +5,7 @@
     "architecture": "x86_64",
     "sourceUrl": "https://github.com/acoustid/chromaprint/releases/download/v1.6.0/chromaprint-fpcalc-1.6.0-windows-x86_64.zip",
     "archiveSha256": "30179d3d0dc4cc92f1a0995c1a2e523fb4867724c2ee6a6ceae474f8e4d6937a",
+    "sizeBytes": 4144640,
     "sha256": "b5545bdf655b50e368a1844a4c13baf444e405ea5d5662396ff0292eaf9bf9e9",
     "versionOutput": "fpcalc version 1.6.0 (FFmpeg Lavc62.11.100 Lavf62.3.100 SwR6.1.100)"
   }

@@ -42,14 +42,23 @@ Read-only release review then identified three Important issues, each reproduced
 3. The installer retention smoke probed an arbitrary temporary directory rather than the real default user-data root. It now refuses to touch a pre-existing `%APPDATA%\Local Diary`, creates a uniquely owned marker there, proves silent uninstall preserves it, and safely removes only its owned root afterward.
 4. Re-review found that the cleanup initially trusted only an earlier ownership flag and exact root path, leaving a race in which newly created user data could be removed. Cleanup now rereads the unique token and requires the root to contain exactly the single ownership marker; any changed root is preserved with a warning.
 
+An independent final review found four further Important release-verification gaps plus one documentation clarification, all addressed with regressions:
+
+1. Electron's explicit `--user-data-dir` could still fall back to the real pre-release root when its new temporary `data` directory did not exist. Both argument forms now disable legacy fallback, and the unpacked smoke refuses an existing root and proves its own `data\diary.sqlite` exists. The real legacy database hash and timestamp remained unchanged across the final smoke.
+2. Binary verification and its resource test executed `fpcalc.exe` before comparing its checksum. Manifest trust shape, byte size, and SHA-256 are now validated before an injectable runner can execute; a tampered candidate regression proves the runner is never called.
+3. Failure cleanup deleted any shortcut at the four candidate paths. It now reparses each remaining shortcut and deletes only an exact target-and-arguments match for the smoke installation, preserving anything changed or not provably owned.
+4. The installer smoke checked existence for all four shortcuts but parsed only three. It now parses and reports all four, requiring empty ordinary arguments and exactly `--browser` for both browser shortcuts.
+5. The release guide now distinguishes desktop-owned shutdown from a secondary desktop window opened by a browser-owned process.
+6. Internal re-review found that failure cleanup still invoked the NSIS uninstaller before manual shortcut ownership checks, allowing the uninstaller itself to delete a replaced link. Failure cleanup now runs the uninstaller only after the install root is known to be smoke-owned and every existing shortcut reparses as an exact target-and-arguments match; otherwise it preserves the installation and warns, while manual cleanup removes only provably owned links.
+
 ## Final artifacts
 
 Generated artifacts are intentionally ignored by git and remain under `apps/desktop/release/`.
 
 - Installer: `apps/desktop/release/Local-Diary-Setup-0.1.0-x64.exe`
-  - SHA-256: `0e244eaf0523490a4cd7be0b8d29ae5dd30232ad4f1e7d63ca3f71ffdabe456b`
+  - SHA-256: `d863c2dbcde35e34e5c563fb833feeb508a2bb7b57efe6632d3d4f7624e60779`
 - Blockmap: `apps/desktop/release/Local-Diary-Setup-0.1.0-x64.exe.blockmap`
-  - SHA-256: `0842fdea1d85aaa006a6768851842dac19dd2f90ec757fc7ff8597a71c30589c`
+  - SHA-256: `011ab1e41908ee0c303453219af89406a7538054d692184f8312514acb7cc326`
 - Unpacked app: `apps/desktop/release/win-unpacked/Local Diary.exe`
 - Checksum file: `apps/desktop/release/checksums.sha256`
 
@@ -57,9 +66,9 @@ Generated artifacts are intentionally ignored by git and remain under `apps/desk
 
 ## Fresh verification
 
-- Focused desktop release suites: 3 files, 14 tests passed in three consecutive runs.
+- Focused desktop release suites: 3 files, 18 tests passed in three consecutive runs.
 - Focused visual and release-flow Playwright suite: 3/3 passed in three consecutive runs.
-- Full unit/integration suite: 41 files, 241 tests passed.
+- Full unit/integration suite: 41 files, 245 tests passed.
 - Workspace typecheck: all five projects passed.
 - Recursive production build: all five projects passed; web built 248 modules.
 - Performance-to-release order regression: 7/7 Playwright tests passed.
@@ -72,7 +81,8 @@ Generated artifacts are intentionally ignored by git and remain under `apps/desk
   - zero non-loopback listeners;
   - one service through desktop/browser handoff;
   - clean desktop shutdown released the port;
-  - a second desktop launch and browser mode reused the same data directory.
+  - a second desktop launch and browser mode reused the same data directory;
+  - the isolated temporary `data\diary.sqlite` existed and the real pre-release database remained byte-for-byte and timestamp unchanged.
 - Silent installer smoke:
   - all four actual `.lnk` files existed;
   - ordinary shortcut arguments were empty;
@@ -91,4 +101,4 @@ Electron Builder reported pnpm duplicate dependency references and listed non-Wi
 
 ## Review
 
-The same read-only release reviewer rechecked every original and follow-up finding after the final safety repair. Final verdict: **Ready — Yes**, with no remaining Critical or Important findings.
+The same read-only release reviewer rechecked every original, independent, and follow-up finding after the final ownership-order repair. Final verdict: **Ready — Yes**, with no remaining Critical or Important findings.

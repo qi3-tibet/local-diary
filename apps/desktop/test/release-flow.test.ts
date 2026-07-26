@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 import {
   createDesktopHarness,
+  hasExplicitUserDataDir,
   resolveDesktopRoots,
   resolveDiaryDataHome,
 } from "../src/main.js";
@@ -36,6 +37,18 @@ it("uses clean Local Diary data but reuses an existing pre-release diary", () =>
     appData,
     (candidate) => candidate === `${current}\\data` || candidate === `${legacy}\\data`,
   )).toBe(current);
+  expect(resolveDiaryDataHome(
+    "C:\\Temp\\OwnedReleaseSmoke",
+    appData,
+    (candidate) => candidate === `${legacy}\\data`,
+    false,
+  )).toBe("C:\\Temp\\OwnedReleaseSmoke");
+});
+
+it("detects both explicit Electron user-data directory argument forms", () => {
+  expect(hasExplicitUserDataDir(["Local Diary.exe", "--user-data-dir=C:\\Temp\\Diary"])).toBe(true);
+  expect(hasExplicitUserDataDir(["Local Diary.exe", "--user-data-dir", "C:\\Temp\\Diary"])).toBe(true);
+  expect(hasExplicitUserDataDir(["Local Diary.exe", "--browser"])).toBe(false);
 });
 
 it("defaults backups to a clear Documents location outside application data", () => {

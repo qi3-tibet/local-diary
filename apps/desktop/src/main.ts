@@ -141,15 +141,23 @@ export function createDesktopHarness(options: DesktopHarnessOptions) {
 
 export type DesktopRoots = LocalServiceOptions & { webAssetsRoot: string };
 
+export function hasExplicitUserDataDir(argv: string[]): boolean {
+  return argv.some(
+    (argument) => argument === "--user-data-dir" || argument.startsWith("--user-data-dir="),
+  );
+}
+
 export function resolveDiaryDataHome(
   currentUserData: string,
   appData: string,
   exists: (candidate: string) => boolean = existsSync,
+  allowLegacyFallback = true,
 ): string {
   const current = path.resolve(currentUserData);
   const legacy = path.join(path.resolve(appData), "@diary", "desktop");
   if (exists(path.join(current, "data"))) return current;
   if (
+    allowLegacyFallback &&
     current.localeCompare(legacy, undefined, { sensitivity: "accent" }) !== 0
     && exists(path.join(legacy, "data"))
   ) {
@@ -190,6 +198,8 @@ export async function runElectronMain(): Promise<void> {
   const diaryDataHome = resolveDiaryDataHome(
     electron.app.getPath("userData"),
     electron.app.getPath("appData"),
+    existsSync,
+    !hasExplicitUserDataDir(process.argv),
   );
   const roots = resolveDesktopRoots(
     diaryDataHome,

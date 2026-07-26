@@ -9,9 +9,11 @@ param(
 $ErrorActionPreference = "Stop"
 $resolvedApp = (Resolve-Path -LiteralPath $AppPath).Path
 $resolvedUserData = [System.IO.Path]::GetFullPath($UserDataRoot)
-if (-not (Test-Path -LiteralPath $resolvedUserData)) {
-  New-Item -ItemType Directory -Path $resolvedUserData | Out-Null
+if (Test-Path -LiteralPath $resolvedUserData) {
+  throw "Release smoke requires a new user data root: $resolvedUserData"
 }
+New-Item -ItemType Directory -Path $resolvedUserData | Out-Null
+$expectedDataPath = Join-Path (Join-Path $resolvedUserData "data") "diary.sqlite"
 $previousBackupRoot = $env:DIARY_BACKUP_ROOT
 $env:DIARY_BACKUP_ROOT = Join-Path $resolvedUserData "backups"
 
@@ -117,6 +119,9 @@ try {
     @{ title = "Release smoke"; markdown = $marker; tags = @("release") } | ConvertTo-Json
   ) | Out-Null
   Invoke-RestMethod -Method Post -Uri "$($first.Url)/api/v1/draft/publish" -ContentType "application/json" -Body "{}" | Out-Null
+  if (-not (Test-Path -LiteralPath $expectedDataPath)) {
+    throw "Release smoke did not create its diary database in the isolated user data root: $expectedDataPath"
+  }
 
   $secondLaunch = Start-Diary @($commonArguments + "--browser")
   if (-not $secondLaunch.WaitForExit(10000)) {
@@ -155,6 +160,8 @@ try {
   $report = [ordered]@{
     appPath = $resolvedApp
     userDataRoot = $resolvedUserData
+    dataPath = $expectedDataPath
+    dataPathVerified = $true
     firstLaunch = @{ url = $first.Url; loopbackListeners = $first.ListenerCount }
     secondInstance = @{ samePort = $true; serviceInstances = 1 }
     cleanShutdown = $true

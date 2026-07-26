@@ -48,6 +48,7 @@ describe("Windows release configuration", () => {
     expect(guide).toContain("%APPDATA%\\Local Diary");
     expect(guide).toContain("%USERPROFILE%\\Documents\\Local Diary Backups");
     expect(guide).toContain("--browser");
+    expect(guide).toContain("launch mode that owns the process determines shutdown behavior");
     expect(guide).toMatch(/uninstall[\s\S]*preserv/i);
     expect(guide).toContain("Get-AuthenticodeSignature");
     expect(guide).toContain("apps/desktop/scripts/smoke-release.ps1");
@@ -64,5 +65,29 @@ describe("Windows release configuration", () => {
     expect(smoke).toContain("Get-ChildItem -LiteralPath $defaultUserData -Force");
     expect(smoke).toContain("$defaultChildren.Count -eq 1");
     expect(smoke).toContain("preserving it instead of deleting");
+  });
+
+  it("isolates release smoke data from every real or pre-release diary", () => {
+    const smoke = readFileSync(path.join(desktopRoot, "scripts", "smoke-release.ps1"), "utf8");
+    expect(smoke).toContain("requires a new user data root");
+    expect(smoke).toContain('$expectedDataPath = Join-Path');
+    expect(smoke).toContain('"diary.sqlite"');
+    expect(smoke).toContain("dataPathVerified = $true");
+  });
+
+  it("parses all four shortcuts and only cleans shortcuts it still owns", () => {
+    const smoke = readFileSync(path.join(desktopRoot, "scripts", "smoke-installer.ps1"), "utf8");
+    expect(smoke).toContain("$desktopShortcut = Get-ShortcutDetails $links[0]");
+    expect(smoke).toContain("$browserShortcut = Get-ShortcutDetails $links[1]");
+    expect(smoke).toContain("$startMenuShortcut = Get-ShortcutDetails $links[2]");
+    expect(smoke).toContain("$startMenuBrowserShortcut = Get-ShortcutDetails $links[3]");
+    expect(smoke).toContain("startMenuShortcut =");
+    expect(smoke).toContain("Test-SmokeShortcutMatches");
+    expect(smoke).toContain("does not own shortcut; preserving");
+    expect(smoke).toContain("Test-AllExistingShortcutsOwned");
+    expect(smoke).toContain("skipping best-effort uninstall");
+    const finallyBlock = smoke.slice(smoke.indexOf("} finally {"));
+    expect(finallyBlock.indexOf("$allExistingShortcutsOwned"))
+      .toBeLessThan(finallyBlock.indexOf("Start-Process -FilePath $uninstaller"));
   });
 });

@@ -24,8 +24,8 @@ The verified release directory is `apps/desktop/release/`.
 
 | Artifact | SHA-256 |
 |---|---|
-| `Local-Diary-Setup-0.1.0-x64.exe` | `0e244eaf0523490a4cd7be0b8d29ae5dd30232ad4f1e7d63ca3f71ffdabe456b` |
-| `Local-Diary-Setup-0.1.0-x64.exe.blockmap` | `0842fdea1d85aaa006a6768851842dac19dd2f90ec757fc7ff8597a71c30589c` |
+| `Local-Diary-Setup-0.1.0-x64.exe` | `d863c2dbcde35e34e5c563fb833feeb508a2bb7b57efe6632d3d4f7624e60779` |
+| `Local-Diary-Setup-0.1.0-x64.exe.blockmap` | `011ab1e41908ee0c303453219af89406a7538054d692184f8312514acb7cc326` |
 
 Verify an artifact independently:
 
@@ -49,7 +49,7 @@ Run `Local-Diary-Setup-0.1.0-x64.exe`, choose a per-user install location, and c
 - `Local Diary` on the Desktop and Start Menu opens the standalone desktop window.
 - `Local Diary - Browser` on the Desktop and Start Menu launches the same application with `--browser`, starts the same loopback-only service, and opens its URL in the default browser.
 
-Launching either shortcut while Local Diary is already running hands off to the existing process. It does not start a second service or a second data owner. Closing the standalone window performs a clean service shutdown. Closing only a browser tab does not stop browser mode; end `Local Diary` from Task Manager when browser-only use is finished.
+Launching either shortcut while Local Diary is already running hands off to the existing process. It does not start a second service or a second data owner. The launch mode that owns the process determines shutdown behavior: when the ordinary desktop shortcut started Local Diary, closing its last window cleanly stops the service and application, including a browser tab opened later. When the browser shortcut started Local Diary, closing a desktop window opened later does not stop the browser-owned service. Closing only a browser tab never stops browser mode; end `Local Diary` from Task Manager when browser-only use is finished.
 
 ## Local data and backups
 
@@ -94,4 +94,4 @@ apps/desktop/scripts/smoke-installer.ps1 `
   -RetentionProbeRoot $env:TEMP\LocalDiaryRetentionSmoke
 ```
 
-The unpacked smoke covers first launch, desktop mode, browser mode, one service instance, clean desktop shutdown, same-directory data reuse, and absence of non-loopback listeners. The installer smoke parses the actual `.lnk` targets and arguments, silently uninstalls, and verifies that both an external retention probe and a uniquely owned marker under the real `%APPDATA%\Local Diary` root survive uninstall. For safety it refuses to run if that default user-data root already exists, and it removes only the root it created after the assertion.
+The unpacked smoke covers first launch, desktop mode, browser mode, one service instance, clean desktop shutdown, same-directory data reuse, and absence of non-loopback listeners. It refuses an existing `UserDataRoot`, creates a dedicated root, and proves that `data\diary.sqlite` was created there so a real or pre-release diary can never be selected by fallback. The installer smoke parses all four actual `.lnk` targets and arguments, silently uninstalls, and verifies that both an external retention probe and a uniquely owned marker under the real `%APPDATA%\Local Diary` root survive uninstall. For safety it refuses to run if that default user-data root already exists, removes only shortcuts whose target and arguments still match the smoke installation, and removes only the data root it created after the ownership assertion.
