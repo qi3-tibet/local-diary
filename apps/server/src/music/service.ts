@@ -31,7 +31,7 @@ export class MusicService {
 
   async attach(entryId: string, bytes: Buffer): Promise<AttachedMusic> {
     this.assertAttachableEntry(entryId);
-    if (!isMp3Container(bytes)) throw new MusicValidationError("Uploaded bytes are not a valid MP3");
+    if (!(await isMp3Container(bytes))) throw new MusicValidationError("Uploaded bytes are not a valid MP3");
 
     const metadata = await readId3(bytes);
     const coverExtensionName = metadata.coverMime ? coverExtension(metadata.coverMime) : null;

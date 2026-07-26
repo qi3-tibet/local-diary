@@ -17,6 +17,7 @@ export type ServerOptions = {
   dataRoot?: string;
   database?: DiaryDatabase;
   clock?: BeijingClock;
+  musicUploadLimit?: number;
 };
 
 export function buildServer(options: ServerOptions = {}) {
@@ -37,7 +38,7 @@ export function buildServer(options: ServerOptions = {}) {
   void registerEntryRoutes(server, service, entries);
   void registerSearchRoutes(server, entries);
   void registerMediaRoutes(server, images);
-  void registerMusicRoutes(server, music);
+  void registerMusicRoutes(server, music, options.musicUploadLimit);
   server.addHook("onClose", async () => database.close());
 
   return server;

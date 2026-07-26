@@ -1,4 +1,5 @@
 import { parseBuffer, selectCover } from "music-metadata";
+import sharp from "sharp";
 
 export type MusicMetadata = {
   title: string | null;
@@ -14,13 +15,14 @@ export async function readId3(bytes: Buffer): Promise<MusicMetadata> {
   try {
     const parsed = await parseBuffer(bytes, { mimeType: "audio/mpeg", size: bytes.length });
     const picture = selectCover(parsed.common.picture);
+    const cover = picture ? await readCover(Buffer.from(picture.data)) : null;
     const metadata = {
       title: clean(parsed.common.title),
       artist: clean(parsed.common.artist),
       album: clean(parsed.common.album),
       year: parsed.common.year ?? null,
-      coverBytes: picture ? Buffer.from(picture.data) : null,
-      coverMime: picture?.format ? normalizeCoverMime(picture.format) : null,
+      coverBytes: cover?.bytes ?? null,
+      coverMime: cover?.mime ?? null,
     };
     return {
       ...metadata,
@@ -33,13 +35,27 @@ export async function readId3(bytes: Buffer): Promise<MusicMetadata> {
   }
 }
 
-export function isMp3Container(bytes: Buffer): boolean {
-  const start = id3End(bytes);
-  for (let offset = start; offset + 3 < bytes.length; offset += 1) {
-    const frameLength = mpegFrameLength(bytes, offset);
-    if (frameLength && mpegFrameLength(bytes, offset + frameLength)) return true;
+export async function isMp3Container(bytes: Buffer): Promise<boolean> {
+  let parsed: Awaited<ReturnType<typeof parseBuffer>>;
+  try {
+    parsed = await parseBuffer(bytes, { mimeType: "audio/mpeg", size: bytes.length });
+  } catch {
+    return false;
   }
-  return false;
+  if (parsed.format.container !== "MPEG" || !parsed.format.hasAudio) return false;
+  const start = id3End(bytes);
+  let coherentFrames = 0;
+  for (let offset = start; offset + 3 < bytes.length; offset += 1) {
+    let next = offset;
+    let framesAtOffset = 0;
+    for (let frameLength = mpegFrameLength(bytes, next); frameLength; frameLength = mpegFrameLength(bytes, next)) {
+      framesAtOffset += 1;
+      next += frameLength;
+    }
+    coherentFrames = Math.max(coherentFrames, framesAtOffset);
+    if (coherentFrames >= 3) return true;
+  }
+  return coherentFrames > 0 && Boolean(parsed.format.codecProfile);
 }
 
 function emptyMetadata(): MusicMetadata {
@@ -59,10 +75,25 @@ function clean(value: string | undefined): string | null {
   return text || null;
 }
 
-function normalizeCoverMime(value: string): string | null {
-  const mime = value.trim().toLowerCase();
-  if (mime === "image/jpg") return "image/jpeg";
-  return /^image\/(?:avif|gif|jpeg|png|tiff|webp)$/.test(mime) ? mime : null;
+async function readCover(bytes: Buffer): Promise<{ bytes: Buffer; mime: string } | null> {
+  try {
+    const metadata = await sharp(bytes).metadata();
+    const mime = coverMimeForFormat(metadata.format);
+    return mime ? { bytes, mime } : null;
+  } catch {
+    return null;
+  }
+}
+
+function coverMimeForFormat(format: string | undefined): string | null {
+  const mimes: Record<string, string> = {
+    gif: "image/gif",
+    jpeg: "image/jpeg",
+    png: "image/png",
+    tiff: "image/tiff",
+    webp: "image/webp",
+  };
+  return format ? mimes[format] ?? null : null;
 }
 
 function id3End(bytes: Buffer): number {

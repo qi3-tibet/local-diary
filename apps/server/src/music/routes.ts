@@ -1,27 +1,63 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { MusicAlreadyAttachedError, MusicEntryNotFoundError, MusicService, MusicValidationError } from "./service.js";
 
-export async function registerMusicRoutes(server: FastifyInstance, music: MusicService): Promise<void> {
-  const attach = async (request: { params: { id: string }; file: () => Promise<{ file: NodeJS.ReadableStream; mimetype: string } | undefined> }, reply: { code: (status: number) => { send: (payload?: unknown) => unknown } }) => {
-    const file = await request.file();
-    if (!file) return reply.code(400).send({ error: "An MP3 file is required" });
-    if (file.mimetype.trim().toLowerCase() !== "audio/mpeg") {
-      file.file.resume();
-      return reply.code(415).send({ error: "Unsupported audio MIME type" });
-    }
+export const MAX_MUSIC_UPLOAD_BYTES = 100 * 1024 * 1024;
+
+export async function registerMusicRoutes(
+  server: FastifyInstance,
+  music: MusicService,
+  maxUploadBytes = MAX_MUSIC_UPLOAD_BYTES,
+): Promise<void> {
+  const attach = async (request: FastifyRequest<{ Params: { id: string } }>, reply: { code: (status: number) => { send: (payload?: unknown) => unknown } }) => {
     try {
-      const bytes = await readStream(file.file);
-      const attached = await music.attach(request.params.id, bytes);
+      const file = await readSingleMusicFile(request, maxUploadBytes);
+      const attached = await music.attach(request.params.id, file.bytes);
       return reply.code(201).send(toResponse(attached));
     } catch (error) {
       if (error instanceof MusicEntryNotFoundError) return reply.code(404).send();
       if (error instanceof MusicAlreadyAttachedError) return reply.code(409).send({ error: error.message });
       if (error instanceof MusicValidationError) return reply.code(error.statusCode).send({ error: error.message });
+      if (error instanceof MusicMultipartError) return reply.code(error.statusCode).send({ error: error.message });
+      if (error instanceof server.multipartErrors.RequestFileTooLargeError) {
+        return reply.code(413).send({ error: "MP3 upload exceeds the 100 MiB limit" });
+      }
+      if (isMultipartShapeLimitError(server, error)) return reply.code(400).send({ error: "Exactly one MP3 file is required" });
       throw error;
     }
   };
   server.post<{ Params: { id: string } }>("/api/v1/entries/:id/music", attach);
   server.patch<{ Params: { id: string } }>("/api/v1/entries/:id/music", attach);
+}
+
+class MusicMultipartError extends Error {
+  constructor(message: string, readonly statusCode: 400 | 413) {
+    super(message);
+  }
+}
+
+async function readSingleMusicFile(request: FastifyRequest, maxUploadBytes: number) {
+  let file: { mimetype: string; bytes: Buffer } | undefined;
+  for await (const part of request.parts({ limits: { files: 1, fields: 0, parts: 1, fileSize: maxUploadBytes } })) {
+    if (part.type !== "file" || part.fieldname !== "music" || file) {
+      if (part.type === "file") part.file.resume();
+      throw new MusicMultipartError("Exactly one MP3 file is required", 400);
+    }
+    if (part.mimetype.trim().toLowerCase() !== "audio/mpeg") {
+      part.file.resume();
+      throw new MusicValidationError("Unsupported audio MIME type", 415);
+    }
+    const bytes = await readStream(part.file);
+    if (part.file.truncated) throw new MusicMultipartError("MP3 upload exceeds the 100 MiB limit", 413);
+    file = { mimetype: part.mimetype, bytes };
+  }
+  if (!file) throw new MusicMultipartError("An MP3 file is required", 400);
+  return file;
+}
+
+function isMultipartShapeLimitError(server: FastifyInstance, error: unknown): boolean {
+  return error instanceof server.multipartErrors.FilesLimitError
+    || error instanceof server.multipartErrors.FieldsLimitError
+    || error instanceof server.multipartErrors.PartsLimitError;
 }
 
 function toResponse(attached: Awaited<ReturnType<MusicService["attach"]>>) {

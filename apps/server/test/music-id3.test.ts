@@ -59,7 +59,7 @@ describe("MP3 ingestion", () => {
   it("allows valid MP3s with missing or corrupt ID3 fields", async () => {
     const { entry, musicService } = createMusicService();
 
-    const attached = await musicService.attach(entry.id, bareMp3());
+    const attached = await musicService.attach(entry.id, realMp3());
 
     expect(attached).toMatchObject({
       title: null,
@@ -89,26 +89,47 @@ describe("MP3 ingestion", () => {
     expect(existsSync(path.join(dataRoot, "media"))).toBe(false);
   });
 
-  it("rejects a lone MPEG frame header embedded in non-audio bytes", async () => {
+  it("rejects two correctly spaced fake MPEG headers in random bytes", async () => {
     const { entry, musicService } = createMusicService();
-    const spoofedFrame = Buffer.concat([Buffer.from([0xff, 0xfb, 0x90, 0x64]), Buffer.alloc(1_000)]);
 
-    await expect(musicService.attach(entry.id, spoofedFrame))
+    await expect(musicService.attach(entry.id, twoHeaderSpoof()))
       .rejects.toThrow("Uploaded bytes are not a valid MP3");
+  });
+
+  it("accepts a generated real MP3 fixture", async () => {
+    const { entry, musicService } = createMusicService();
+
+    await expect(musicService.attach(entry.id, realMp3())).resolves.toMatchObject({
+      recognitionStatus: "manual_required",
+    });
+  });
+
+  it("does not persist APIC bytes that only claim to be an image", async () => {
+    const { dataRoot, entry, musicService } = createMusicService();
+
+    const attached = await musicService.attach(entry.id, taggedMp3(Buffer.from("not an image"), "image/png"));
+
+    expect(attached).toMatchObject({
+      title: "Pink + White",
+      coverMime: null,
+      coverMediaId: null,
+      coverPath: null,
+    });
+    expect(await objectCount(dataRoot)).toBe(1);
   });
 
   it("does not attach music to missing or trashed entries", async () => {
     const { database, entry, musicService } = createMusicService();
 
-    await expect(musicService.attach("missing", bareMp3())).rejects.toThrow("ENTRY_NOT_FOUND");
+    await expect(musicService.attach("missing", realMp3())).rejects.toThrow("ENTRY_NOT_FOUND");
     database.prepare("UPDATE entries SET state = 'trashed' WHERE id = ?").run(entry.id);
-    await expect(musicService.attach(entry.id, bareMp3())).rejects.toThrow("ENTRY_NOT_FOUND");
+    await expect(musicService.attach(entry.id, realMp3())).rejects.toThrow("ENTRY_NOT_FOUND");
   });
 
   it("enforces one track when two attachments race", async () => {
     const { database, entry, musicService } = createMusicService();
     const [left, right] = await Promise.allSettled([
-      musicService.attach(entry.id, bareMp3()),
+      musicService.attach(entry.id, realMp3()),
       musicService.attach(entry.id, taggedMp3()),
     ]);
 
@@ -161,7 +182,7 @@ describe("MP3 ingestion", () => {
     const url = `/api/v1/entries/${entry.json().id}/music`;
 
     const upload = await server.inject(multipartRequest("POST", url, taggedMp3(), "audio/mpeg", "track.mp3"));
-    const second = await server.inject(multipartRequest("PATCH", url, bareMp3(), "audio/mpeg", "second.mp3"));
+    const second = await server.inject(multipartRequest("PATCH", url, realMp3(), "audio/mpeg", "second.mp3"));
 
     expect(upload.statusCode).toBe(201);
     expect(upload.json()).toMatchObject({ title: "Pink + White", artist: "Frank Ocean", coverMime: "image/png" });
@@ -192,6 +213,71 @@ describe("MP3 ingestion", () => {
     expect(database.prepare("SELECT COUNT(*) AS count FROM entry_music").get()).toEqual({ count: 0 });
     expect(existsSync(path.join(dataRoot, "media"))).toBe(false);
   });
+
+  it("enforces its endpoint-specific multipart size limit without artifacts", async () => {
+    const dataRoot = mkdtempSync(path.join(tmpdir(), "local-diary-music-limit-"));
+    const database = createDiaryDatabase(dataRoot);
+    const entries = new EntryRepository(database);
+    const draft = entries.saveDraft({ title: "Song", markdown: "A song", tags: [] });
+    const entry = entries.publishDraft(draft.id, "2026-07-26T08:00:00.000Z");
+    const server = buildServer({ dataRoot, database, musicUploadLimit: 128 });
+    dataRoots.push(dataRoot);
+    databases.push(database);
+    servers.push(server);
+
+    const response = await server.inject(multipartRequest(
+      "POST",
+      `/api/v1/entries/${entry.id}/music`,
+      realMp3(),
+      "audio/mpeg",
+      "too-large.mp3",
+    ));
+
+    expect(response.statusCode).toBe(413);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM media").get()).toEqual({ count: 0 });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM entry_music").get()).toEqual({ count: 0 });
+    expect(existsSync(path.join(dataRoot, "media"))).toBe(false);
+  });
+
+  it("rejects multipart requests with extra fields", async () => {
+    const dataRoot = mkdtempSync(path.join(tmpdir(), "local-diary-music-parts-"));
+    const database = createDiaryDatabase(dataRoot);
+    const entries = new EntryRepository(database);
+    const draft = entries.saveDraft({ title: "Song", markdown: "A song", tags: [] });
+    const entry = entries.publishDraft(draft.id, "2026-07-26T08:00:00.000Z");
+    const server = buildServer({ dataRoot, database });
+    dataRoots.push(dataRoot);
+    databases.push(database);
+    servers.push(server);
+
+    const response = await server.inject(multipartPartsRequest(`/api/v1/entries/${entry.id}/music`, [
+      { type: "file", bytes: realMp3(), mime: "audio/mpeg", filename: "first.mp3" },
+      { type: "field", value: "unexpected" },
+    ]));
+
+    expect(response.statusCode).toBe(400);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM media").get()).toEqual({ count: 0 });
+  });
+
+  it("rejects multipart requests with a second MP3 file", async () => {
+    const dataRoot = mkdtempSync(path.join(tmpdir(), "local-diary-music-parts-"));
+    const database = createDiaryDatabase(dataRoot);
+    const entries = new EntryRepository(database);
+    const draft = entries.saveDraft({ title: "Song", markdown: "A song", tags: [] });
+    const entry = entries.publishDraft(draft.id, "2026-07-26T08:00:00.000Z");
+    const server = buildServer({ dataRoot, database });
+    dataRoots.push(dataRoot);
+    databases.push(database);
+    servers.push(server);
+
+    const response = await server.inject(multipartPartsRequest(`/api/v1/entries/${entry.id}/music`, [
+      { type: "file", bytes: realMp3(), mime: "audio/mpeg", filename: "first.mp3" },
+      { type: "file", bytes: realMp3(), mime: "audio/mpeg", filename: "second.mp3" },
+    ]));
+
+    expect(response.statusCode).toBe(400);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM media").get()).toEqual({ count: 0 });
+  });
 });
 
 function multipartRequest(method: "POST" | "PATCH", url: string, bytes: Buffer, mime: string, filename: string) {
@@ -208,17 +294,37 @@ function multipartRequest(method: "POST" | "PATCH", url: string, bytes: Buffer, 
   };
 }
 
-function taggedMp3(): Buffer {
-  const cover = pngCover();
+function multipartPartsRequest(url: string, parts: Array<
+  | { type: "file"; bytes: Buffer; mime: string; filename: string }
+  | { type: "field"; value: string }
+>) {
+  const boundary = "music-upload-parts-boundary";
+  const encoded = parts.flatMap((part) => part.type === "file"
+    ? [
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="music"; filename="${part.filename}"\r\nContent-Type: ${part.mime}\r\n\r\n`),
+      part.bytes,
+      Buffer.from("\r\n"),
+    ]
+    : [Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="extra"\r\n\r\n${part.value}\r\n`)],
+  );
+  return {
+    method: "POST" as const,
+    url,
+    headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+    payload: Buffer.concat([...encoded, Buffer.from(`--${boundary}--\r\n`)]),
+  };
+}
+
+function taggedMp3(cover = pngCover(), coverMime = "image/png"): Buffer {
   const frames = [
     textFrame("TIT2", "Pink + White"),
     textFrame("TPE1", "Frank Ocean"),
     textFrame("TALB", "Blonde"),
     textFrame("TYER", "2016"),
-    apicFrame("image/png", cover),
+    apicFrame(coverMime, cover),
   ];
   const tag = Buffer.concat(frames);
-  return Buffer.concat([Buffer.from([0x49, 0x44, 0x33, 0x03, 0x00, 0x00]), syncSafe(tag.length), tag, bareMp3()]);
+  return Buffer.concat([Buffer.from([0x49, 0x44, 0x33, 0x03, 0x00, 0x00]), syncSafe(tag.length), tag, realMp3()]);
 }
 
 function textFrame(id: string, text: string): Buffer {
@@ -246,7 +352,7 @@ function syncSafe(value: number): Buffer {
   return Buffer.from([(value >> 21) & 0x7f, (value >> 14) & 0x7f, (value >> 7) & 0x7f, value & 0x7f]);
 }
 
-function bareMp3(): Buffer {
+function twoHeaderSpoof(): Buffer {
   const header = Buffer.from([0xff, 0xfb, 0x90, 0x64]);
   return Buffer.concat([header, Buffer.alloc(413), header, Buffer.alloc(413)]);
 }
@@ -255,8 +361,15 @@ function corruptTaggedMp3(): Buffer {
   return Buffer.concat([
     Buffer.from([0x49, 0x44, 0x33, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05]),
     Buffer.from("oops!"),
-    bareMp3(),
+    realMp3(),
   ]);
+}
+
+function realMp3(): Buffer {
+  return Buffer.from(
+    "SUQzBAAAAAAAIlRTU0UAAAAOAAADTGF2ZjYxLjcuMTAwAAAAAAAAAAAAAAD/4zjAAAAAAAAAAAAASW5mbwAAAA8AAAAAAAAA2AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAATGF2YzYxLjE5AAAAAAAAAAAAAAAAAAAAAAAAAAAAANgAAPVdAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "base64",
+  );
 }
 
 function pngCover(): Buffer {
