@@ -9,7 +9,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "pnpm --filter @diary/contracts build && tsc -p tsconfig.build.json",
     "start:e2e": "tsx src/e2e.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

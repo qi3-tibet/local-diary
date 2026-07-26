@@ -1,5 +1,4 @@
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   createServiceLifecycle,
   type LocalService,
@@ -144,7 +143,10 @@ export async function runElectronMain(): Promise<void> {
   await harness.run();
 }
 
-const thisFile = fileURLToPath(import.meta.url);
-if (process.versions.electron && process.argv[1] && path.resolve(process.argv[1]) === path.resolve(thisFile)) {
+export function isElectronLaunch(versions: NodeJS.ProcessVersions): boolean {
+  return typeof versions.electron === "string";
+}
+
+if (isElectronLaunch(process.versions)) {
   void runElectronMain();
 }

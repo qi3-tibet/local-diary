@@ -1,9 +1,15 @@
 {
   "name": "@diary/desktop",
+  "version": "0.1.0",
+  "description": "Private local-first diary for Windows",
   "private": true,
   "type": "module",
+  "main": "dist/main.js",
   "scripts": {
     "build": "pnpm --filter @diary/server build && pnpm --filter @diary/web build && tsc -p tsconfig.build.json",
+    "start": "electron .",
+    "package": "pnpm build && electron-builder --dir",
+    "dist": "pnpm build && electron-builder",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -12,5 +18,37 @@
   "devDependencies": {
     "electron": "43.2.0",
     "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.localdiary.app",
+    "productName": "Local Diary",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "package.json",
+      "node_modules/**"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/dist",
+        "to": "web",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asar": true,
+    "npmRebuild": false,
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**",
+      "**/*.node"
+    ],
+    "win": {
+      "target": [
+        "dir"
+      ]
+    }
   }
 }

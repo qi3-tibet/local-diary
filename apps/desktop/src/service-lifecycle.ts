@@ -53,6 +53,7 @@ export function createServiceLifecycle(
       try {
         if (options.webAssetsRoot) attachWebAssets(server as StaticServer, options.webAssetsRoot);
         const url = await server.listen({ host: "127.0.0.1", port: 0 });
+        assertLoopbackUrl(url);
         const service = { host: "127.0.0.1" as const, url };
         running = { server, service };
         return service;
@@ -95,6 +96,28 @@ export function createServiceLifecycle(
       return "stopped";
     },
   };
+}
+
+function assertLoopbackUrl(value: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("Local service must return a canonical loopback URL.");
+  }
+  const port = Number(parsed.port);
+  if (
+    parsed.protocol !== "http:"
+    || parsed.hostname !== "127.0.0.1"
+    || !Number.isInteger(port)
+    || port < 1
+    || port > 65535
+    || parsed.username !== ""
+    || parsed.password !== ""
+    || parsed.pathname !== "/"
+    || parsed.search !== ""
+    || parsed.hash !== ""
+  ) throw new Error("Local service must return a canonical loopback URL.");
 }
 
 function attachWebAssets(server: StaticServer, root: string): void {

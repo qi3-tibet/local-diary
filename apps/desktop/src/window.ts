@@ -39,15 +39,25 @@ export async function createDiaryWindow(localUrl: string, runtime?: WindowRuntim
       nodeIntegration: false,
     },
   });
+  const handleTarget = (target: string): "local" | "external" | "reject" => {
+    let parsed: URL;
+    try {
+      parsed = new URL(target);
+    } catch {
+      return "reject";
+    }
+    if (parsed.origin === allowedOrigin) return "local";
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? "external" : "reject";
+  };
   const openExternal = (target: string) => {
-    if (new URL(target).origin !== allowedOrigin) void electron.shell.openExternal(target);
+    if (handleTarget(target) === "external") void electron.shell.openExternal(target);
   };
   window.webContents.setWindowOpenHandler(({ url }) => {
     openExternal(url);
     return { action: "deny" };
   });
   window.webContents.on("will-navigate", (event, targetUrl) => {
-    if (new URL(targetUrl).origin === allowedOrigin) return;
+    if (handleTarget(targetUrl) === "local") return;
     event.preventDefault();
     openExternal(targetUrl);
   });

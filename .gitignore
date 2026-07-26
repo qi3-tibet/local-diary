@@ -2,5 +2,6 @@
 .worktrees/
 node_modules/
 dist/
+apps/desktop/release/
 coverage/
 *.log

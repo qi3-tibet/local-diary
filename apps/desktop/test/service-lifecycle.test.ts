@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createDesktopHarness } from "../src/main.js";
+import { createDesktopHarness, isElectronLaunch } from "../src/main.js";
 import { createServiceLifecycle, type LocalServer } from "../src/service-lifecycle.js";
 
 type FakeServer = LocalServer & {
@@ -46,6 +46,24 @@ describe("local service lifecycle", () => {
     expect(healthy.listen).toHaveBeenCalledWith({ host: "127.0.0.1", port: 0 });
   });
 
+  it.each([
+    "https://127.0.0.1:45679",
+    "http://localhost:45679",
+    "http://127.0.0.1:0",
+    "http://127.0.0.1:45679/not-allowed",
+    "http://user@127.0.0.1:45679",
+  ])("rejects a non-canonical listen URL and remains retryable: %s", async (url) => {
+    const rejected = fakeServer(url);
+    const healthy = fakeServer("http://127.0.0.1:45679");
+    const factory = vi.fn(() => (factory.mock.calls.length === 1 ? rejected : healthy));
+    const lifecycle = createServiceLifecycle(factory);
+
+    await expect(lifecycle.start()).rejects.toThrow("loopback URL");
+    expect(rejected.close).toHaveBeenCalledTimes(1);
+    expect(lifecycle.state()).toBe("stopped");
+    await expect(lifecycle.start()).resolves.toEqual({ host: "127.0.0.1", url: "http://127.0.0.1:45679" });
+  });
+
   it("waits for an in-flight start before it closes", async () => {
     let resolveListen!: (url: string) => void;
     const server = fakeServer();
@@ -88,6 +106,11 @@ function fakeLifecycle(url = "http://127.0.0.1:43127") {
 }
 
 describe("desktop launch modes", () => {
+  it("recognizes the packaged Electron main process without relying on argv[1]", () => {
+    expect(isElectronLaunch({ electron: "43.2.0" } as NodeJS.ProcessVersions)).toBe(true);
+    expect(isElectronLaunch({} as NodeJS.ProcessVersions)).toBe(false);
+  });
+
   it("opens the default browser without creating a desktop window in browser mode", async () => {
     const app = fakeApp();
     const shell = { openExternal: vi.fn(async () => undefined) };
