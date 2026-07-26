@@ -36,24 +36,71 @@ test.describe.serial("backup and recovery", () => {
     await expect(page.getByText("Changed body after archive.")).not.toBeVisible();
   });
 
-  test("persists a verified path and keeps an unwritable warning nonblocking", async ({ page }) => {
+  test("keeps a browser-picked folder client-side and never sends a server path", async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, "showDirectoryPicker", {
+        configurable: true,
+        value: async () => ({
+          kind: "directory",
+          name: "Browser vault",
+          queryPermission: async () => "granted",
+          requestPermission: async () => "granted",
+          getFileHandle: async () => {
+            throw new Error("not used in this test");
+          },
+        }),
+      });
+    });
+    let backupPuts = 0;
+    page.on("request", (request) => {
+      if (request.method() === "PUT" && request.url().endsWith("/api/v1/settings/backup")) {
+        backupPuts += 1;
+      }
+    });
+
+    await page.goto("/");
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("button", { name: "Choose backup location" }).click();
+
+    await expect(page.getByText("BROWSER EXPORT FOLDER · Browser vault")).toBeVisible();
+    await expect(page.getByText(/BROWSER EXPORT FOLDER READY/)).toBeVisible();
+    expect(backupPuts).toBe(0);
+  });
+
+  test("persists only a desktop-bridge path and keeps an unwritable warning nonblocking", async ({ page }) => {
     const runRoot = requiredRunRoot();
     const verified = path.join(runRoot, "chosen-backups");
     const notDirectory = path.join(runRoot, "not-a-directory");
     await mkdir(runRoot, { recursive: true });
     await writeFile(notDirectory, "not writable as a directory");
+    await page.addInitScript((chosen) => {
+      Object.defineProperty(window, "diaryDesktop", {
+        configurable: true,
+        value: { chooseBackupDirectory: async () => chosen },
+      });
+    }, verified);
 
     await page.goto("/");
     await page.getByRole("button", { name: "Settings" }).click();
-    await page.getByLabel("Backup folder path").fill(verified);
-    await page.getByRole("button", { name: "Save backup location" }).click();
+    const verifiedPut = page.waitForRequest((request) => (
+      request.method() === "PUT"
+      && request.url().endsWith("/api/v1/settings/backup")
+      && request.postDataJSON().backupRoot === verified
+    ));
+    await page.getByRole("button", { name: "Choose backup location" }).click();
+    await verifiedPut;
     await expect(page.getByText("BACKUP LOCATION VERIFIED")).toBeVisible();
     await page.reload();
     await page.getByRole("button", { name: "Settings" }).click();
-    await expect(page.getByLabel("Backup folder path")).toHaveValue(path.resolve(verified));
+    await expect(page.getByLabel("Automatic backup location")).toHaveText(path.resolve(verified));
 
-    await page.getByLabel("Backup folder path").fill(notDirectory);
-    await page.getByRole("button", { name: "Save backup location" }).click();
+    await page.evaluate((chosen) => {
+      Object.defineProperty(window, "diaryDesktop", {
+        configurable: true,
+        value: { chooseBackupDirectory: async () => chosen },
+      });
+    }, notDirectory);
+    await page.getByRole("button", { name: "Choose backup location" }).click();
     await expect(page.getByText("BACKUP LOCATION IS NOT WRITABLE")).toBeVisible();
     await expect(page.getByRole("button", { name: "CHOOSE ANOTHER LOCATION" })).toBeVisible();
 

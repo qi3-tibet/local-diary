@@ -227,6 +227,14 @@ export function createApiClient(request: Request = fetch) {
       return (await response.json()) as { snapshotId: string; archiveUrl: string };
     },
 
+    async fetchDownload(url: string): Promise<Blob> {
+      const response = await request(url, {
+        headers: { accept: "application/zip" },
+      });
+      if (!response.ok) throw new Error(`Could not download the export (${response.status}).`);
+      return response.blob();
+    },
+
     async restoreBackup(
       archive: File,
       onEvent: (event: RestoreEvent) => void,

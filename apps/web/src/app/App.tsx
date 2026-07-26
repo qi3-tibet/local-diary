@@ -150,9 +150,8 @@ export function App() {
     checkedDraftRecovery.current = true;
     setView("settings");
     window.requestAnimationFrame(() => {
-      const input = document.querySelector<HTMLInputElement>('[aria-label="Backup folder path"]');
-      input?.focus();
-      input?.select();
+      const button = document.querySelector<HTMLButtonElement>('[aria-label="Choose backup location"]');
+      button?.focus();
     });
   }
 

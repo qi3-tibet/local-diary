@@ -125,6 +125,36 @@ describe("backup settings", () => {
     expect(after.json()).toMatchObject({ backupRoot: path.resolve(good), writable: true });
   });
 
+  it("does not let a delayed GET overwrite a newer verified PUT", async () => {
+    const workspace = temp("diary-settings-race-");
+    const original = path.join(workspace, "original");
+    const replacement = path.join(workspace, "replacement");
+    let releaseFirst!: () => void;
+    const firstVerification = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let verificationCount = 0;
+    const repository = new BackupSettingsRepository({
+      dataRoot: path.join(workspace, "data"),
+      settingsPath: path.join(workspace, "settings.json"),
+      defaultBackupRoot: original,
+      verifyRoot: async (candidate) => {
+        verificationCount += 1;
+        if (verificationCount === 1) await firstVerification;
+        return path.resolve(candidate);
+      },
+    });
+
+    const delayedGet = repository.get();
+    await Promise.resolve();
+    const put = repository.setBackupRoot(replacement);
+    await Promise.resolve();
+    releaseFirst();
+
+    await expect(delayedGet).resolves.toMatchObject({ backupRoot: path.resolve(original) });
+    await expect(put).resolves.toMatchObject({ backupRoot: path.resolve(replacement) });
+    await expect(repository.get()).resolves.toMatchObject({ backupRoot: path.resolve(replacement) });
+    expect(verificationCount).toBe(3);
+  });
+
   function temp(prefix: string): string {
     const root = mkdtempSync(path.join(tmpdir(), prefix));
     roots.push(root);

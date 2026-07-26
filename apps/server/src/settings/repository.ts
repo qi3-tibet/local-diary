@@ -25,6 +25,7 @@ export class BackupSettingsRepository {
   private readonly dataRoot: string;
   private readonly settingsPath: string;
   private readonly defaultBackupRoot: string;
+  private readonly verifyRoot: (candidate: string, dataRoot: string) => Promise<string>;
   private configuredBackupRoot: string;
   private writeTail = Promise.resolve();
 
@@ -32,10 +33,12 @@ export class BackupSettingsRepository {
     dataRoot: string;
     settingsPath: string;
     defaultBackupRoot: string;
+    verifyRoot?: (candidate: string, dataRoot: string) => Promise<string>;
   }) {
     this.dataRoot = path.resolve(options.dataRoot);
     this.settingsPath = path.resolve(options.settingsPath);
     this.defaultBackupRoot = path.resolve(options.defaultBackupRoot);
+    this.verifyRoot = options.verifyRoot ?? verifyBackupRoot;
     this.configuredBackupRoot = this.readStoredRootSync() ?? this.defaultBackupRoot;
   }
 
@@ -44,14 +47,16 @@ export class BackupSettingsRepository {
   }
 
   async get(): Promise<BackupSettings> {
-    const backupRoot = this.configuredBackupRoot;
-    try {
-      const canonical = await verifyBackupRoot(backupRoot, this.dataRoot);
-      this.configuredBackupRoot = canonical;
-      return result(canonical, true);
-    } catch {
-      return result(backupRoot, false);
-    }
+    return this.serialized(async () => {
+      const backupRoot = this.configuredBackupRoot;
+      try {
+        const canonical = await this.verifyRoot(backupRoot, this.dataRoot);
+        this.configuredBackupRoot = canonical;
+        return result(canonical, true);
+      } catch {
+        return result(backupRoot, false);
+      }
+    });
   }
 
   async setBackupRoot(candidate: string): Promise<BackupSettings> {
@@ -59,7 +64,7 @@ export class BackupSettingsRepository {
       throw new BackupLocationError("BACKUP_LOCATION_UNSAFE");
     }
     return this.serialized(async () => {
-      const canonical = await verifyBackupRoot(candidate, this.dataRoot);
+      const canonical = await this.verifyRoot(candidate, this.dataRoot);
       await this.persist({ version: 1, backupRoot: canonical });
       this.configuredBackupRoot = canonical;
       return result(canonical, true);

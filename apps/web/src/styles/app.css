@@ -988,6 +988,29 @@ span.management-title {
   line-height: 1.7;
 }
 
+.settings-location {
+  display: grid;
+  gap: 9px;
+  color: var(--muted);
+  font-size: 0.54rem;
+  letter-spacing: 0.14em;
+}
+
+.settings-location output {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  line-height: 1.6;
+}
+
+.settings-directory {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+}
+
 .settings-actions,
 .export-range {
   display: flex;

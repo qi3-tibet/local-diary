@@ -244,4 +244,17 @@ describe("diary API client", () => {
       () => {},
     )).rejects.toThrow("ARCHIVE_MANIFEST_INVALID");
   });
+
+  it("fetches a verified export as a blob for File System Access writes", async () => {
+    const bytes = new Blob(["zip"], { type: "application/zip" });
+    const request = vi.fn<RequestFn>(async () => new Response(bytes, { status: 200 }));
+    const client = createApiClient(request);
+
+    const downloaded = await client.fetchDownload("/api/v1/backups/id/archive");
+
+    expect(await downloaded.text()).toBe("zip");
+    expect(request).toHaveBeenCalledWith("/api/v1/backups/id/archive", {
+      headers: { accept: "application/zip" },
+    });
+  });
 });
