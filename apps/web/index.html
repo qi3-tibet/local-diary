@@ -5,25 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>Fine Scale Diary</title>
-    <script data-theme-bootstrap>
-      (() => {
-        const systemTheme = () =>
-          window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-        let resolved = systemTheme();
-
-        try {
-          const remembered = window.localStorage.getItem("diary-theme");
-          if (remembered === "light" || remembered === "dark") {
-            resolved = remembered;
-          }
-        } catch {
-          // System preference remains the fallback when storage is unavailable.
-        }
-
-        document.documentElement.dataset.theme = resolved;
-        document.documentElement.style.colorScheme = resolved;
-      })();
-    </script>
+    <script src="/theme-bootstrap.js"></script>
   </head>
   <body>
     <div id="root"></div>

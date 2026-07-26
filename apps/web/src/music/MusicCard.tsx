@@ -34,7 +34,7 @@ export function MusicCard({ music, player, onPlay }: MusicCardProps) {
           />
         ) : null}
       </div>
-      <div className="music-card-copy">
+      <div className="music-card-copy music-metadata">
         <strong>{title}</strong>
         {details ? <span>{details}</span> : <span>UNKNOWN ARTIST</span>}
       </div>

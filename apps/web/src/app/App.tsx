@@ -15,6 +15,7 @@ import { FloatingPlayer } from "../music/FloatingPlayer";
 import { getBrowserPlayerStore } from "../music/player-store";
 import { BackupSettings } from "../settings/BackupSettings";
 import { RestoreProgress, type RestoreState } from "../settings/RestoreProgress";
+import { prefersReducedMotion } from "../a11y/reduced-motion";
 
 type View = "diary" | "editor" | "search" | "trash" | "settings";
 
@@ -160,6 +161,7 @@ export function App() {
     window.requestAnimationFrame(() => {
       document.querySelector<HTMLElement>(`[data-entry-id="${entry.id}"]`)?.scrollIntoView({
         block: "center",
+        behavior: prefersReducedMotion() ? "auto" : "smooth",
       });
     });
   }

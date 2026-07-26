@@ -21,6 +21,9 @@ function isThemePreference(value: string | null): value is ThemePreference {
 export function createThemeStore(storage: ThemeStorage, systemIsDark: () => boolean) {
   const remembered = storage.getItem(THEME_STORAGE_KEY);
   const preference: ThemePreference = isThemePreference(remembered) ? remembered : "system";
+  if (remembered !== null && !isThemePreference(remembered)) {
+    storage.setItem(THEME_STORAGE_KEY, "system");
+  }
   const resolve = (next: ThemePreference): ResolvedTheme =>
     next === "system" ? (systemIsDark() ? "dark" : "light") : next;
 

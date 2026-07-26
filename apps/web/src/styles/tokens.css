@@ -1,8 +1,11 @@
+@import "@fontsource/noto-serif-sc/chinese-simplified-400.css";
+@import "@fontsource/noto-serif-sc/chinese-simplified-600.css";
+
 :root {
   --paper: #f2eee6;
   --panel: #e9e3d8;
   --ink: #28251f;
-  --muted: #7f776b;
+  --muted: #6c655b;
   --line: #d2cabd;
   --ochre: #a87442;
   --ui-font: Georgia, "Times New Roman", serif;

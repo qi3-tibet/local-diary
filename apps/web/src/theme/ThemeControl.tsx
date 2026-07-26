@@ -12,16 +12,19 @@ type ThemeControlProps = {
 };
 
 export function ThemeControl({ preference, onChange }: ThemeControlProps) {
-  const label = preference[0].toUpperCase() + preference.slice(1);
+  const label: Record<ThemePreference, string> = {
+    system: "Theme: System. Switch to light theme",
+    light: "Theme: Light. Switch to dark theme",
+    dark: "Theme: Dark. Follow system theme",
+  };
 
   return (
     <button
       className="theme-control"
       type="button"
-      aria-label={`Theme: ${label}. Change theme`}
+      aria-label={label[preference]}
+      data-preference={preference}
       onClick={() => onChange(nextPreference[preference])}
-    >
-      <span className="theme-mark" aria-hidden="true" />
-    </button>
+    />
   );
 }

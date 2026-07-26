@@ -228,7 +228,7 @@ export function BackupSettings({
   }
 
   return (
-    <section className="management-page backup-settings" aria-labelledby="backup-settings-title">
+    <main className="management-page backup-settings" aria-labelledby="backup-settings-title">
       <header className="settings-heading">
         <p>LOCAL RECOVERY</p>
         <h1 id="backup-settings-title">BACKUP</h1>
@@ -339,7 +339,7 @@ export function BackupSettings({
       </section>
 
       {status ? <p className="settings-status" role="status">{status}</p> : null}
-    </section>
+    </main>
   );
 }
 

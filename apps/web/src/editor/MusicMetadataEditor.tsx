@@ -62,7 +62,7 @@ export function MusicMetadataEditor({
         <div className="music-candidates" aria-label="Recognition candidates">
           {candidates.map((candidate) => (
             <div className="music-candidate" key={candidate.id}>
-              <span className="music-candidate-copy">
+              <span className="music-candidate-copy music-metadata">
                 <strong>{candidate.title ?? "UNTITLED"}</strong>
                 <span>{candidate.artist ?? "UNKNOWN ARTIST"}</span>
                 {candidate.album ? <span>{candidate.album}</span> : null}
@@ -84,6 +84,7 @@ export function MusicMetadataEditor({
         <label>
           <span>SONG TITLE</span>
           <input
+            className="music-metadata"
             aria-label="Song title"
             disabled={busy}
             value={title}
@@ -93,6 +94,7 @@ export function MusicMetadataEditor({
         <label>
           <span>ARTIST</span>
           <input
+            className="music-metadata"
             aria-label="Artist"
             disabled={busy}
             value={artist}
@@ -102,6 +104,7 @@ export function MusicMetadataEditor({
         <label>
           <span>ALBUM</span>
           <input
+            className="music-metadata"
             aria-label="Album"
             disabled={busy}
             value={album}
@@ -111,6 +114,7 @@ export function MusicMetadataEditor({
         <label>
           <span>YEAR</span>
           <input
+            className="music-metadata"
             aria-label="Year"
             disabled={busy}
             inputMode="numeric"

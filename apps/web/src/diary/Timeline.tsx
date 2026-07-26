@@ -48,6 +48,7 @@ export function Timeline({
   if (groups.length === 0) {
     return (
       <main className="reading-page reading-page-empty">
+        <h1 className="visually-hidden">DIARY</h1>
         <p className="reading-status">NO PUBLISHED ENTRIES</p>
       </main>
     );
@@ -55,6 +56,7 @@ export function Timeline({
 
   return (
     <main className="reading-page" ref={timelineRef}>
+      <h1 className="visually-hidden">DIARY</h1>
       {groups.map(({ day, entries: dayEntries }) => (
         <section className="day" id={`day-${day}`} key={day} data-day={day} data-testid={`day-${day}`}>
           <header className="day-heading">

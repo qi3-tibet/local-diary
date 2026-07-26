@@ -26,7 +26,7 @@ export function TrashPanel({ onRestore }: TrashPanelProps) {
   return (
     <main className="management-page" aria-label="Trash">
       <header className="management-heading">
-        <span>TRASH · 30 DAY RETENTION</span>
+        <h1>TRASH <span>· 30 DAY RETENTION</span></h1>
       </header>
 
       {trashQuery.isPending ? (
@@ -41,8 +41,8 @@ export function TrashPanel({ onRestore }: TrashPanelProps) {
         <ul className="management-list">
           {trashQuery.data.map((entry) => (
             <li key={entry.id}>
-              <span className="management-title">{entry.title}</span>
-              <div className="management-actions">
+              <span className="management-title entry-title-index">{entry.title}</span>
+              <div className="management-actions management-action">
                 <button
                   type="button"
                   aria-label="Restore entry"

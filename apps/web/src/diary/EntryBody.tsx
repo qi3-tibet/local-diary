@@ -48,7 +48,7 @@ export function EntryBody({ entry, onEdit, onTrash, player }: EntryBodyProps) {
         {entry.music ? <MusicCard music={entry.music} player={player} /> : null}
       </div>
       {onEdit || onTrash ? (
-        <div className="entry-actions">
+        <div className="entry-actions management-action">
           {onEdit ? (
             <button type="button" aria-label="Edit entry" onClick={() => onEdit(entry)}>
               EDIT

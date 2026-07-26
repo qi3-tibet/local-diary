@@ -306,6 +306,7 @@ function EditorForm({
 
   return (
     <main className="editor-page">
+      <h1 className="visually-hidden">{entry ? "EDIT ENTRY" : "NEW ENTRY"}</h1>
       <form
         className="editor-form"
         aria-label="Diary editor"
@@ -316,6 +317,7 @@ function EditorForm({
           <label className="editor-title-field">
             <span>TITLE</span>
             <input
+              className="entry-title-index"
               aria-label="Title"
               autoFocus
               disabled={submitting}
@@ -340,6 +342,7 @@ function EditorForm({
           <label className="editor-body-field">
             <span>MARKDOWN</span>
             <textarea
+              className="entry-body"
               ref={textarea}
               aria-label="Markdown body"
               disabled={submitting}

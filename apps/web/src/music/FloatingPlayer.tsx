@@ -20,7 +20,7 @@ export function FloatingPlayer({ player }: { player: PlayerStore }) {
           />
         ) : null}
       </div>
-      <div className="floating-copy">
+      <div className="floating-copy music-metadata">
         <strong>{track.title}</strong>
         {track.artist ? <span>{track.artist}</span> : null}
         {state.error ? <span className="player-error">{state.error}</span> : null}

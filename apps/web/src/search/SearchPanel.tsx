@@ -32,7 +32,7 @@ export function SearchPanel({ onEdit, onOpen, onTrash }: SearchPanelProps) {
   return (
     <main className="management-page" aria-label="Diary search">
       <header className="management-heading">
-        <span>SEARCH</span>
+        <h1>SEARCH</h1>
         <input
           aria-label="Search diary"
           autoFocus
@@ -54,11 +54,11 @@ export function SearchPanel({ onEdit, onOpen, onTrash }: SearchPanelProps) {
         <ul className="management-list">
           {results.map((entry) => (
             <li key={entry.id}>
-              <button className="management-title" type="button" onClick={() => onOpen(entry)}>
+              <button className="management-title entry-title-index" type="button" onClick={() => onOpen(entry)}>
                 {entry.title}
               </button>
               {entry.edited ? <span className="edited-mark">EDITED</span> : null}
-              <div className="management-actions">
+              <div className="management-actions management-action">
                 <button type="button" aria-label="Edit entry" onClick={() => onEdit(entry)}>
                   EDIT
                 </button>
