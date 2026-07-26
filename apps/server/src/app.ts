@@ -20,6 +20,7 @@ import path from "node:path";
 import { SnapshotService } from "./backup/snapshot.js";
 import { registerBackupRoutes } from "./backup/routes.js";
 import type { RestoreContext } from "./backup/restore.js";
+import { registerMarkdownExportRoutes } from "./export/routes.js";
 
 export type ServerOptions = {
   dataRoot?: string;
@@ -66,6 +67,11 @@ export function buildServer(options: ServerOptions = {}) {
   void registerMusicRoutes(server, () => music, () => recognition, options.musicUploadLimit);
   void registerMusicStreamRoute(server, () => database, () => mediaStore);
   registerBackupRoutes(server, { snapshots: () => snapshots, temporaryRoot: restoreTemporaryRoot, restoreContext: options.restoreContext ?? defaultRestoreContext });
+  registerMarkdownExportRoutes(server, {
+    database: () => database,
+    mediaStore: () => mediaStore,
+    temporaryRoot: restoreTemporaryRoot,
+  });
   server.addHook("onClose", async () => database.close());
 
   return server;
