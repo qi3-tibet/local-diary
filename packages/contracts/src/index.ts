@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export * from "./backup.js";
+
 export const entryStateSchema = z.enum(["draft", "published", "trashed"]);
 export const draftInputSchema = z.object({
   title: z.string(),

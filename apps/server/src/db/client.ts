@@ -86,6 +86,14 @@ const migration007 = `
   UPDATE entry_music SET recognition_candidates_json = '[]';
 `;
 
+const migration008 = `
+  CREATE TABLE backup_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+`;
+
 export function migrateDiaryDatabase(db: DiaryDatabase): void {
   db.pragma("foreign_keys = ON");
   const version = db.pragma("user_version", { simple: true }) as number;
@@ -144,6 +152,13 @@ export function migrateDiaryDatabase(db: DiaryDatabase): void {
     db.transaction(() => {
       db.exec(migration007);
       db.pragma("user_version = 7");
+    })();
+  }
+
+  if (version < 8) {
+    db.transaction(() => {
+      db.exec(migration008);
+      db.pragma("user_version = 8");
     })();
   }
 }
