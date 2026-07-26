@@ -149,6 +149,35 @@ textarea::placeholder {
   scrollbar-width: thin;
 }
 
+.date-jump {
+  display: grid;
+  grid-template-columns: 1fr 28px;
+  gap: 2px;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.date-jump input {
+  min-width: 0;
+  height: 28px;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  font: 0.55rem/1 var(--ui-font);
+}
+
+.date-jump button {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 1rem/1 var(--ui-font);
+}
+
 .date-link {
   position: relative;
   display: flex;
@@ -1246,6 +1275,13 @@ span.management-title {
     flex-direction: row;
     overflow-x: auto;
     overflow-y: hidden;
+  }
+
+  .date-jump {
+    grid-template-columns: 116px 32px;
+    padding: 8px;
+    border-right: 1px solid var(--line);
+    border-bottom: 0;
   }
 
   .date-link {

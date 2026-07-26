@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 import {
   draftInputSchema,
@@ -34,6 +34,7 @@ type DayPageOptions = {
 };
 
 export class EntryRepository {
+  private readonly cursorKey = randomBytes(32);
   constructor(
     private readonly db: DiaryDatabase,
     private readonly mediaStore?: MediaStore,
@@ -204,7 +205,7 @@ export class EntryRepository {
 
   selectDayWindow(options: DayPageOptions): DayPage {
     const limitDays = clampLimit(options.limitDays, 14, 1, 31);
-    const cursorDay = options.cursor ? decodeDayCursor(options.cursor) : null;
+    const cursorDay = options.cursor ? decodeDayCursor(options.cursor, options.direction, this.cursorKey) : null;
     const comparison = options.direction === "older" ? "<" : ">";
     const order = options.direction === "older" ? "DESC" : "ASC";
     const days = this.db.prepare(`
@@ -224,8 +225,8 @@ export class EntryRepository {
     const oldest = (options.direction === "older" ? days.at(-1) : days[0])?.day ?? null;
     return {
       days: grouped,
-      previousCursor: newest ? encodeDayCursor(newest) : null,
-      nextCursor: oldest ? encodeDayCursor(oldest) : null,
+      previousCursor: newest ? encodeDayCursor(newest, "newer", this.cursorKey) : null,
+      nextCursor: oldest ? encodeDayCursor(oldest, "older", this.cursorKey) : null,
     };
   }
 
@@ -240,7 +241,7 @@ export class EntryRepository {
   }
 
   selectDaysAround(day: string, limitDays = 15): DayPage {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new Error("Invalid day");
+    if (!isCalendarDay(day)) throw new Error("Invalid day");
     const limit = clampLimit(limitDays, 15, 1, 31);
     const before = Math.floor((limit - 1) / 2);
     const after = limit - before - 1;
@@ -261,8 +262,8 @@ export class EntryRepository {
     const selected = [...older.reverse(), ...center, ...newer];
     return {
       days: selected.map(({ day: selectedDay }) => ({ day: selectedDay, entries: this.entriesForDay(selectedDay) })),
-      previousCursor: selected[0] ? encodeDayCursor(selected[0].day) : null,
-      nextCursor: selected.at(-1) ? encodeDayCursor(selected.at(-1)!.day) : null,
+      previousCursor: selected.at(-1) ? encodeDayCursor(selected.at(-1)!.day, "newer", this.cursorKey) : null,
+      nextCursor: selected[0] ? encodeDayCursor(selected[0].day, "older", this.cursorKey) : null,
     };
   }
 
@@ -504,20 +505,36 @@ function clampLimit(value: number | undefined, fallback: number, min: number, ma
   return Math.max(min, Math.min(max, Math.floor(value!)));
 }
 
-function encodeDayCursor(day: string): string {
-  return Buffer.from(JSON.stringify({ day }), "utf8").toString("base64url");
+function encodeDayCursor(day: string, direction: "older" | "newer", key: Buffer): string {
+  const payload = Buffer.from(JSON.stringify({ day, direction, v: 1 }), "utf8").toString("base64url");
+  const signature = createHmac("sha256", key).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
 }
 
-function decodeDayCursor(value: string): string {
+function decodeDayCursor(value: string, expectedDirection: "older" | "newer", key: Buffer): string {
   try {
-    const decoded: unknown = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+    const [payload, signature, extra] = value.split(".");
+    if (!payload || !signature || extra) throw new Error();
+    const expected = createHmac("sha256", key).update(payload).digest();
+    const received = Buffer.from(signature, "base64url");
+    if (received.length !== expected.length || !timingSafeEqual(received, expected)) throw new Error();
+    const decoded: unknown = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
     if (
       !decoded
       || typeof decoded !== "object"
-      || !/^\d{4}-\d{2}-\d{2}$/.test((decoded as { day?: unknown }).day as string)
+      || !isCalendarDay((decoded as { day?: unknown }).day)
+      || (decoded as { direction?: unknown }).direction !== expectedDirection
+      || (decoded as { v?: unknown }).v !== 1
     ) throw new Error();
     return (decoded as { day: string }).day;
   } catch {
     throw new Error("Invalid day cursor");
   }
+}
+
+function isCalendarDay(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
 }

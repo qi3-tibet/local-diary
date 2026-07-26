@@ -2,7 +2,7 @@ import type { Entry } from "@diary/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
-import { api } from "../api/client";
+import { api, type DayPage } from "../api/client";
 import { DateRail } from "../diary/DateRail";
 import { WindowedTimeline } from "../diary/WindowedTimeline";
 import { groupEntriesByBeijingDay } from "../diary/date-groups";
@@ -28,6 +28,7 @@ export function App() {
   const [restoreState, setRestoreState] = useState<RestoreState>();
   const [backupWarning, setBackupWarning] = useState<string>();
   const checkedDraftRecovery = useRef(false);
+  const paging = useRef(false);
   const [themeSession] = useState(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     return {
@@ -41,18 +42,20 @@ export function App() {
   const requestedDay = new URLSearchParams(window.location.search).get("day") ?? undefined;
   const entriesQuery = useQuery({
     queryKey: ["published-entries", requestedDay],
-    queryFn: () => api.listDayPage(requestedDay),
+    queryFn: () => api.listDayPage({ day: requestedDay }),
   });
   const draftRecoveryQuery = useQuery({
     queryKey: ["draft"],
     queryFn: api.getDraft,
   });
-  const entries = entriesQuery.data?.days.flatMap((group) => group.entries) ?? [];
+  const [dayPage, setDayPage] = useState<DayPage>();
+  const entries = dayPage?.days.flatMap((group) => group.entries) ?? [];
   const days = useMemo(
     () => groupEntriesByBeijingDay(entries).map((group) => group.day),
     [entries],
   );
   const [activeDay, setActiveDay] = useState<string>();
+  const [jumpTarget, setJumpTarget] = useState<string>();
   const sortedDays = useMemo(() => [...days].sort(), [days]);
   const restoreLocked = restoreState
     ? ["SAFETY_BACKUP", "RESTORING", "REBUILDING"].includes(restoreState.phase)
@@ -62,6 +65,10 @@ export function App() {
     document.documentElement.dataset.theme = resolvedTheme;
     document.documentElement.style.colorScheme = resolvedTheme;
   }, [resolvedTheme]);
+
+  useEffect(() => {
+    if (entriesQuery.data) setDayPage(entriesQuery.data);
+  }, [entriesQuery.data]);
 
   useEffect(() => {
     const syncSystem = () => themeSession.store.getState().syncSystem();
@@ -85,6 +92,17 @@ export function App() {
       document.getElementById(`day-${requestedDay}`)?.scrollIntoView({ block: "start", behavior: "auto" });
     });
   }, [entriesQuery.isSuccess, requestedDay]);
+
+  useEffect(() => {
+    if (!jumpTarget) return;
+    window.requestAnimationFrame(() => {
+      const section = document.getElementById(`day-${jumpTarget}`);
+      if (!section) return;
+      section.scrollIntoView({ block: "center", behavior: "auto" });
+      section.focus({ preventScroll: true });
+      setJumpTarget(undefined);
+    });
+  }, [dayPage, jumpTarget]);
 
   useEffect(() => {
     if (!draftRecoveryQuery.isSuccess || checkedDraftRecovery.current) return;
@@ -174,6 +192,55 @@ export function App() {
     });
   }
 
+  function mergeDays(current: DayPage, incoming: DayPage, position: "older" | "newer"): DayPage {
+    const known = new Set(current.days.map((group) => group.day));
+    const additions = incoming.days.filter((group) => !known.has(group.day));
+    const combined = position === "older"
+      ? [...additions, ...current.days]
+      : [...current.days, ...additions];
+    const bounded = combined.length > 60
+      ? (position === "older" ? combined.slice(0, 60) : combined.slice(-60))
+      : combined;
+    return {
+      days: bounded,
+      previousCursor: position === "newer" ? incoming.previousCursor : current.previousCursor,
+      nextCursor: position === "older" ? incoming.nextCursor : current.nextCursor,
+    };
+  }
+
+  async function loadOlder(): Promise<void> {
+    if (!dayPage?.nextCursor || paging.current) return;
+    paging.current = true;
+    try {
+      const next = await api.listDayPage({ cursor: dayPage.nextCursor, direction: "older" });
+      setDayPage((current) => current ? mergeDays(current, next, "older") : next);
+    } catch {
+      await entriesQuery.refetch();
+    } finally {
+      paging.current = false;
+    }
+  }
+
+  async function loadNewer(): Promise<void> {
+    if (!dayPage?.previousCursor || paging.current) return;
+    paging.current = true;
+    try {
+      const next = await api.listDayPage({ cursor: dayPage.previousCursor, direction: "newer" });
+      setDayPage((current) => current ? mergeDays(current, next, "newer") : next);
+    } catch {
+      await entriesQuery.refetch();
+    } finally {
+      paging.current = false;
+    }
+  }
+
+  async function jumpToDay(day: string): Promise<void> {
+    const next = await api.listDayPage({ day });
+    setJumpTarget(day);
+    setDayPage(next);
+    setActiveDay(day);
+  }
+
   let content;
   if (view === "editor") {
     content = (
@@ -213,7 +280,11 @@ export function App() {
       <WindowedTimeline
         entries={entries}
         activeDay={activeDay}
-        onActiveDayChange={setActiveDay}
+        preserveAnchor={!jumpTarget}
+        pagingEnabled={!jumpTarget}
+        onNeedOlder={() => void loadOlder()}
+        onNeedNewer={() => void loadNewer()}
+        onActiveDayChange={(day) => { if (!jumpTarget) setActiveDay(day); }}
         onEditEntry={editEntry}
         onTrashEntry={(entry) => void trashFromTimeline(entry)}
         player={player}
@@ -226,6 +297,7 @@ export function App() {
       <DateRail
         entries={entries}
         activeDay={activeDay}
+        onJumpDay={(day) => void jumpToDay(day)}
         footer={<ThemeControl preference={preference} onChange={setPreference} />}
       />
       <div className="app-main">

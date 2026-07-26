@@ -57,8 +57,33 @@ describe("large diary performance", () => {
         url: "/api/v1/entries/days?cursor=not-a-cursor",
       });
       expect(invalid.statusCode).toBe(400);
+      const impossibleDate = await server.inject({
+        method: "GET",
+        url: "/api/v1/entries/days?day=2020-02-31",
+      });
+      expect(impossibleDate.statusCode).toBe(400);
     } finally {
       await server.close();
+      close();
+    }
+  });
+
+  it("rejects tampered and wrong-direction opaque cursors while paging both directions without gaps", () => {
+    const { database, close } = seedLargeDiary(160, { days: 8, sameMinute: true });
+    try {
+      const repository = new EntryRepository(database);
+      const newest = repository.selectDayWindow({ direction: "older", limitDays: 2 });
+      expect(() => repository.selectDayWindow({
+        cursor: `${newest.nextCursor}x`, direction: "older", limitDays: 2,
+      })).toThrow("Invalid day cursor");
+      expect(() => repository.selectDayWindow({
+        cursor: newest.nextCursor, direction: "newer", limitDays: 2,
+      })).toThrow("Invalid day cursor");
+      const older = repository.selectDayWindow({ cursor: newest.nextCursor, direction: "older", limitDays: 2 });
+      const back = repository.selectDayWindow({ cursor: older.previousCursor, direction: "newer", limitDays: 2 });
+      expect(back.days.map((group) => group.day)).toEqual(newest.days.map((group) => group.day));
+      expect(new Set([...newest.days, ...older.days].map((group) => group.day)).size).toBe(4);
+    } finally {
       close();
     }
   });

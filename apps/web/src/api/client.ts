@@ -88,8 +88,14 @@ export function createApiClient(request: Request = fetch) {
       return (await response.json()) as Entry[];
     },
 
-    async listDayPage(day?: string): Promise<DayPage> {
-      const query = day ? `?day=${encodeURIComponent(day)}&limit=15` : "?direction=older&limit=15";
+    async listDayPage(options: { day?: string; cursor?: string; direction?: "older" | "newer" } = {}): Promise<DayPage> {
+      const params = new URLSearchParams({ limit: "15" });
+      if (options.day) params.set("day", options.day);
+      else {
+        params.set("direction", options.direction ?? "older");
+        if (options.cursor) params.set("cursor", options.cursor);
+      }
+      const query = `?${params.toString()}`;
       const response = await request(`/api/v1/entries/days${query}`, {
         headers: { accept: "application/json" },
       });
