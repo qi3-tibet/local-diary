@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 import yauzl from "yauzl";
+import { fromMarkdown } from "mdast-util-from-markdown";
 import { buildServer } from "../src/app.js";
 import { createDiaryDatabase, type DiaryDatabase } from "../src/db/client.js";
 import {
@@ -157,6 +158,85 @@ describe("portable Markdown export", () => {
     expect(names.every(isSafeArchiveName)).toBe(true);
   });
 
+  it("rewrites media definitions used by full, collapsed, and shortcut image references only", async () => {
+    const fixture = createFixture();
+    const sources = [
+      ["full-image", Buffer.from("full image"), "png"],
+      ["collapsed-image", Buffer.from("collapsed image"), "jpg"],
+      ["shortcut-image", Buffer.from("shortcut image"), "webp"],
+      ["mixed-image", Buffer.from("mixed image"), "gif"],
+    ] as const;
+    const entryId = seedEntry(fixture.database, {
+      title: "Reference images",
+      markdown: [
+        "Full ![full][ALBUM   COVER]",
+        "Collapsed ![collapsed][]",
+        "Shortcut ![shortcut]",
+        "Shared ![shared][mixed] and ![shared again][MIXED]",
+        "Ordinary shared link [site][mixed]",
+        "Link only [docs][link only]",
+        "",
+        "```md",
+        "[code photo]: media:full-image",
+        "```",
+        "",
+        "[album cover]: media:full-image \"Full title\"",
+        "[collapsed]: media:collapsed-image",
+        "[shortcut]: media:shortcut-image",
+        "[mixed]: media:mixed-image",
+        "[link only]: media:link-only",
+        "[unused]: media:unused-image",
+      ].join("\n"),
+      publishedAt: "2026-07-26T09:15:00+08:00",
+    });
+    for (const [id, bytes, extension] of sources) {
+      const stored = await fixture.store.put(bytes, extension);
+      insertMedia(
+        fixture.database,
+        entryId,
+        id,
+        stored.hash,
+        extension === "jpg" ? "image/jpeg" : `image/${extension}`,
+        extension,
+      );
+    }
+
+    const entries = await readZip(await exportFixture(fixture, { entryId }));
+    const markdown = [...entries.entries()].find(([name]) => name.endsWith(".md"))![1].toString("utf8");
+    const { body } = parseFrontMatter(markdown);
+    const objects = new Map(sources.map(([id, bytes, extension]) => [
+      id,
+      {
+        bytes,
+        path: `../media/${createHash("sha256").update(bytes).digest("hex")}.${extension}`,
+      },
+    ]));
+
+    expect(body).toContain(`[album cover]: ${objects.get("full-image")!.path} "Full title"`);
+    expect(body).toContain(`[collapsed]: ${objects.get("collapsed-image")!.path}`);
+    expect(body).toContain(`[shortcut]: ${objects.get("shortcut-image")!.path}`);
+    expect(body).toContain(`[mixed]: ${objects.get("mixed-image")!.path}`);
+    expect(body).toContain("Ordinary shared link [site][mixed]");
+    expect(body).toContain("[link only]: media:link-only");
+    expect(body).toContain("[unused]: media:unused-image");
+    expect(body).toContain("```md\n[code photo]: media:full-image\n```");
+    expect([...entries.keys()].filter((name) => name.startsWith("media/"))).toHaveLength(4);
+    for (const { bytes, path } of objects.values()) {
+      expect(entries.get(path.slice(3))).toEqual(bytes);
+    }
+
+    const tree = fromMarkdown(body) as {
+      children: Array<{ type: string; identifier?: string; url?: string }>;
+    };
+    const definitions = new Map(
+      tree.children
+        .filter((node) => node.type === "definition")
+        .map((node) => [node.identifier, node.url]),
+    );
+    expect(definitions.get("album cover")).toBe(objects.get("full-image")!.path);
+    expect(definitions.get("mixed")).toBe(objects.get("mixed-image")!.path);
+  });
+
   it("selects one published entry or an inclusive Beijing date range and excludes drafts and trash", async () => {
     const fixture = createFixture();
     const before = seedEntry(fixture.database, { title: "Before", markdown: "before", publishedAt: "2026-07-24T23:59:00+08:00" });
@@ -175,14 +255,16 @@ describe("portable Markdown export", () => {
 
     const single = await readZip(await exportFixture(fixture, { entryId: first }));
     expect([...single.keys()].filter((name) => name.endsWith(".md"))).toHaveLength(1);
-    await expect(exportFixture(fixture, { entryId: before.replace(/.$/, "0") })).rejects.toThrow("EXPORT_ENTRY_NOT_FOUND");
+    let unknownEntryId = randomUUID();
+    while ([before, first, last].includes(unknownEntryId)) unknownEntryId = randomUUID();
+    await expect(exportFixture(fixture, { entryId: unknownEntryId })).rejects.toThrow("EXPORT_ENTRY_NOT_FOUND");
   });
 
   it("fails without publishing a partial archive when referenced media is missing or corrupt", async () => {
     const fixture = createFixture();
     const entryId = seedEntry(fixture.database, {
       title: "Broken",
-      markdown: "![missing](media:missing-image)",
+      markdown: "![missing][photo]\n\n[photo]: media:missing-image",
       publishedAt: "2026-07-26T12:00:00+08:00",
     });
     const expectedHash = createHash("sha256").update("expected").digest("hex");

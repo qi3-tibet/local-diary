@@ -81,6 +81,7 @@ type Replacement = {
 type PositionedNode = {
   type?: string;
   url?: string;
+  identifier?: string;
   position?: {
     start?: { offset?: number };
     end?: { offset?: number };
@@ -274,24 +275,69 @@ function parseImageReferences(markdown: string): { replacements: Replacement[]; 
   const tree = fromMarkdown(markdown) as PositionedNode;
   const replacements: Replacement[] = [];
   const mediaIds: string[] = [];
+  const imageReferenceIdentifiers = new Set<string>();
   walk(tree, (node) => {
-    if (node.type !== "image" || typeof node.url !== "string" || !node.url.startsWith("media:")) return;
+    if (node.type === "imageReference" && node.identifier) {
+      imageReferenceIdentifiers.add(node.identifier);
+    }
+  });
+
+  const seenDefinitions = new Set<string>();
+  walk(tree, (node) => {
+    let destinationStart: number;
+    if (node.type === "image") {
+      if (typeof node.url !== "string" || !node.url.startsWith("media:")) return;
+      destinationStart = findInlineDestination(markdown, node);
+    } else if (node.type === "definition") {
+      if (!node.identifier || seenDefinitions.has(node.identifier)) return;
+      seenDefinitions.add(node.identifier);
+      if (
+        !imageReferenceIdentifiers.has(node.identifier)
+        || typeof node.url !== "string"
+        || !node.url.startsWith("media:")
+      ) return;
+      destinationStart = findDefinitionDestination(markdown, node);
+    } else {
+      return;
+    }
+
     const mediaId = node.url.slice("media:".length);
-    const nodeStart = node.position?.start?.offset;
-    const nodeEnd = node.position?.end?.offset;
-    if (!mediaId || nodeStart === undefined || nodeEnd === undefined) throw new Error("EXPORT_MARKDOWN_INVALID");
-    const raw = markdown.slice(nodeStart, nodeEnd);
-    const labelEnd = raw.indexOf("](");
-    const relativeStart = labelEnd < 0 ? -1 : raw.indexOf(node.url, labelEnd + 2);
-    if (relativeStart < 0) throw new Error("EXPORT_MARKDOWN_INVALID");
+    if (!mediaId) throw new Error("EXPORT_MARKDOWN_INVALID");
     replacements.push({
-      start: nodeStart + relativeStart,
-      end: nodeStart + relativeStart + node.url.length,
+      start: destinationStart,
+      end: destinationStart + node.url.length,
       mediaId,
     });
     if (!mediaIds.includes(mediaId)) mediaIds.push(mediaId);
   });
   return { replacements, mediaIds };
+}
+
+function findInlineDestination(markdown: string, node: PositionedNode): number {
+  const { raw, start } = positionedSource(markdown, node);
+  const labelEnd = raw.indexOf("](");
+  const relativeStart = labelEnd < 0 || typeof node.url !== "string"
+    ? -1
+    : raw.indexOf(node.url, labelEnd + 2);
+  if (relativeStart < 0) throw new Error("EXPORT_MARKDOWN_INVALID");
+  return start + relativeStart;
+}
+
+function findDefinitionDestination(markdown: string, node: PositionedNode): number {
+  const { raw, start } = positionedSource(markdown, node);
+  const labelEnd = raw.indexOf("]:");
+  const relativeStart = labelEnd < 0 || typeof node.url !== "string"
+    ? -1
+    : raw.indexOf(node.url, labelEnd + 2);
+  if (relativeStart < 0) throw new Error("EXPORT_MARKDOWN_INVALID");
+  return start + relativeStart;
+}
+
+function positionedSource(markdown: string, node: PositionedNode): { raw: string; start: number } {
+  const start = node.position?.start?.offset;
+  const end = node.position?.end?.offset;
+  if (start === undefined || end === undefined) throw new Error("EXPORT_MARKDOWN_INVALID");
+  return { raw: markdown.slice(start, end), start };
 }
 
 function walk(node: PositionedNode, visit: (node: PositionedNode) => void): void {
