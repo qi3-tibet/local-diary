@@ -39,6 +39,7 @@ export function WindowedTimeline({ entries, activeDay, onActiveDayChange, onEdit
   needOlder.current = onNeedOlder;
   needNewer.current = onNeedNewer;
 
+
   useLayoutEffect(() => {
     const root = document.documentElement;
     const nextFirst = groups[0]?.day;
@@ -53,7 +54,9 @@ export function WindowedTimeline({ entries, activeDay, onActiveDayChange, onEdit
   useEffect(() => {
     const trackDirection = () => {
       const next = window.scrollY;
-      if (next !== lastScrollY.current) scrollDirection.current = next > lastScrollY.current ? "down" : "up";
+      if (next !== lastScrollY.current) {
+        scrollDirection.current = next > lastScrollY.current ? "down" : "up";
+      }
       lastScrollY.current = next;
       const atTop = next <= 4;
       const atBottom = next + window.innerHeight >= document.documentElement.scrollHeight - 4;
