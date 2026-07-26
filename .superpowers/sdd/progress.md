@@ -32,7 +32,7 @@ Merge base: `938ef83`
 - Task 1: complete (commits d0af7ac..f5b4be8, review clean after runtime packaging/navigation fixes)
 - Task 2: complete (commits f5b4be8..67044c3, review clean after interface font-boundary fix)
 - Task 3: complete (commits 67044c3..1480fdb, review clean after entry-level windowing/navigation hardening)
-- Task 4: pending
+- Task 4: complete (commits dc705dd..96a5799, review clean after release verification hardening)
 
 ## Review notes
 
