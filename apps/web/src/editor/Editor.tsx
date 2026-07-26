@@ -29,7 +29,7 @@ function EditorForm({ entry, initialValue, onCancel, onComplete }: EditorFormPro
   const [error, setError] = useState<string>();
   const isDraft = !entry;
 
-  useSilentDraft(value, api.saveDraft, isDraft && !submitting);
+  const draftPersistence = useSilentDraft(value, api.saveDraft, isDraft && !submitting);
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -43,9 +43,10 @@ function EditorForm({ entry, initialValue, onCancel, onComplete }: EditorFormPro
     try {
       const completed = entry
         ? await api.updateEntry(entry.id, value)
-        : await api.saveDraft(value).then(() => api.publishDraft());
+        : await draftPersistence.finalize(value).then(() => api.publishDraft());
       onComplete(completed);
     } catch {
+      if (isDraft) draftPersistence.resume();
       setError(entry ? "THE ENTRY COULD NOT BE SAVED" : "THE DRAFT COULD NOT BE PUBLISHED");
       setSubmitting(false);
     }

@@ -3,7 +3,11 @@ import { expect, test } from "@playwright/test";
 test("drafts, publishes, searches, edits, trashes, and restores", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "New entry" }).click();
+  await page.getByRole("button", { name: "Done" }).click();
+  await expect(page.getByRole("alert")).toHaveText("TITLE AND MARKDOWN BODY ARE REQUIRED");
   await page.getByLabel("Title").fill("雨后的街道");
+  await page.getByRole("button", { name: "Done" }).click();
+  await expect(page.getByRole("alert")).toHaveText("TITLE AND MARKDOWN BODY ARE REQUIRED");
   const saved = page.waitForResponse(
     (response) =>
       response.request().method() === "PUT"
@@ -38,6 +42,7 @@ test("drafts, publishes, searches, edits, trashes, and restores", async ({ page 
   await searchResult.getByRole("button", { name: "Move to trash" }).click();
   await expect(searchResult).not.toBeVisible();
 
+  await page.reload();
   await page.getByRole("button", { name: "Trash" }).click();
   const trashItem = page.getByRole("listitem").filter({ hasText: "雨后的街道" });
   await expect(trashItem).toBeVisible();

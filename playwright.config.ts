@@ -1,14 +1,15 @@
 import { defineConfig, devices } from "@playwright/test";
-import { mkdirSync, rmSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-const runRoot = path.join(tmpdir(), `local-diary-playwright-${process.pid}`);
+const runId = process.env.DIARY_E2E_RUN_ID ?? randomUUID();
+const runRoot = process.env.DIARY_E2E_RUN_ROOT
+  ?? path.join(tmpdir(), `local-diary-playwright-${runId}`);
 const dataRoot = path.join(runRoot, "data");
 const outputDir = path.join(runRoot, "artifacts");
 
-rmSync(runRoot, { recursive: true, force: true });
-mkdirSync(dataRoot, { recursive: true });
+process.env.DIARY_E2E_RUN_ID = runId;
 process.env.DIARY_E2E_RUN_ROOT = runRoot;
 
 export default defineConfig({
@@ -18,6 +19,10 @@ export default defineConfig({
   retries: 0,
   outputDir,
   globalTeardown: "./apps/web/e2e/global-teardown.ts",
+  reporter: [
+    ["list"],
+    ["./apps/web/e2e/cleanup-reporter.ts"],
+  ],
   use: {
     baseURL: "http://127.0.0.1:4173",
     trace: "retain-on-failure",
