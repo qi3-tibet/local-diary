@@ -15,7 +15,6 @@ import { FloatingPlayer } from "../music/FloatingPlayer";
 import { getBrowserPlayerStore } from "../music/player-store";
 import { BackupSettings } from "../settings/BackupSettings";
 import { RestoreProgress, type RestoreState } from "../settings/RestoreProgress";
-import { prefersReducedMotion } from "../a11y/reduced-motion";
 
 type View = "diary" | "editor" | "search" | "trash" | "settings";
 
@@ -56,6 +55,7 @@ export function App() {
   );
   const [activeDay, setActiveDay] = useState<string>();
   const [jumpTarget, setJumpTarget] = useState<string>();
+  const [pendingEntryFocus, setPendingEntryFocus] = useState<string>();
   const sortedDays = useMemo(() => [...days].sort(), [days]);
   const restoreLocked = restoreState
     ? ["SAFETY_BACKUP", "RESTORING", "REBUILDING"].includes(restoreState.phase)
@@ -103,6 +103,15 @@ export function App() {
       setJumpTarget(undefined);
     });
   }, [dayPage, jumpTarget]);
+
+  useEffect(() => {
+    if (!pendingEntryFocus) return;
+    const entry = document.querySelector<HTMLElement>(`[data-entry-id="${pendingEntryFocus}"]`);
+    if (!entry) return;
+    entry.scrollIntoView({ block: "center", behavior: "auto" });
+    entry.focus({ preventScroll: true });
+    setPendingEntryFocus(undefined);
+  }, [dayPage, pendingEntryFocus]);
 
   useEffect(() => {
     if (!draftRecoveryQuery.isSuccess || checkedDraftRecovery.current) return;
@@ -182,14 +191,15 @@ export function App() {
     });
   }
 
-  function openSearchResult(entry: Entry): void {
+  async function openSearchResult(entry: Entry): Promise<void> {
     showDiary();
-    window.requestAnimationFrame(() => {
-      document.querySelector<HTMLElement>(`[data-entry-id="${entry.id}"]`)?.scrollIntoView({
-        block: "center",
-        behavior: prefersReducedMotion() ? "auto" : "smooth",
-      });
-    });
+    if (!entry.publishedAt) return;
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(new Date(entry.publishedAt));
+    const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
+    setPendingEntryFocus(entry.id);
+    await jumpToDay(`${value("year")}-${value("month")}-${value("day")}`);
   }
 
   function mergeDays(current: DayPage, incoming: DayPage, position: "older" | "newer"): DayPage {
@@ -198,11 +208,8 @@ export function App() {
     const combined = position === "older"
       ? [...additions, ...current.days]
       : [...current.days, ...additions];
-    const bounded = combined.length > 60
-      ? (position === "older" ? combined.slice(0, 60) : combined.slice(-60))
-      : combined;
     return {
-      days: bounded,
+      days: combined,
       previousCursor: position === "newer" ? incoming.previousCursor : current.previousCursor,
       nextCursor: position === "older" ? incoming.nextCursor : current.nextCursor,
     };
@@ -254,7 +261,7 @@ export function App() {
     content = (
       <SearchPanel
         onEdit={editEntry}
-        onOpen={openSearchResult}
+        onOpen={(entry) => void openSearchResult(entry)}
         onTrash={trashEntry}
       />
     );

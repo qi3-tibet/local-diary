@@ -24,6 +24,9 @@ export async function registerEntryRoutes(
   });
   server.get<{ Querystring: { cursor?: string; direction?: "older" | "newer"; limit?: string; day?: string } }>("/api/v1/entries/days", async (request, reply) => {
     try {
+      if (request.query.direction && request.query.direction !== "older" && request.query.direction !== "newer") {
+        return reply.code(400).send({ error: "INVALID_DAY_CURSOR" });
+      }
       const limit = request.query.limit ? Number(request.query.limit) : undefined;
       const page = request.query.day
         ? entries().selectDaysAround(request.query.day, limit)

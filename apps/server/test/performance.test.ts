@@ -57,6 +57,11 @@ describe("large diary performance", () => {
         url: "/api/v1/entries/days?cursor=not-a-cursor",
       });
       expect(invalid.statusCode).toBe(400);
+      const invalidDirection = await server.inject({
+        method: "GET",
+        url: "/api/v1/entries/days?direction=sideways",
+      });
+      expect(invalidDirection.statusCode).toBe(400);
       const impossibleDate = await server.inject({
         method: "GET",
         url: "/api/v1/entries/days?day=2020-02-31",

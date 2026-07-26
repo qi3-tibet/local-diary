@@ -15,6 +15,8 @@ type DateRailProps = {
 
 export function DateRail({ entries, activeDay, footer, onJumpDay }: DateRailProps) {
   const groups = groupEntriesByBeijingDay(entries);
+  const activeIndex = Math.max(0, groups.findIndex((group) => group.day === activeDay));
+  const visibleGroups = groups.slice(Math.max(0, activeIndex - 30), activeIndex + 31);
   const [jumpDay, setJumpDay] = useState(activeDay ?? groups[0]?.day ?? "");
   const jumpLabel = jumpDay ? `Go to ${formatDateLabel(jumpDay)}` : "Go to date";
 
@@ -26,7 +28,7 @@ export function DateRail({ entries, activeDay, footer, onJumpDay }: DateRailProp
         <button type="submit" aria-label={jumpLabel}>{"→"}</button>
       </form>
       <nav className="date-list" aria-label="Diary dates">
-        {groups.map(({ day }) => (
+        {visibleGroups.map(({ day }) => (
           <a
             className="date-link"
             href={`#day-${day}`}

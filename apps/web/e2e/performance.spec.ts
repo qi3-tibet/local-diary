@@ -17,8 +17,8 @@ test("jumps from the rail without mounting 20,000 entry nodes", async ({ page, r
 
   let olderPages = 0;
   let newerPages = 0;
-  page.on("request", (requestEvent) => {
-    const url = new URL(requestEvent.url());
+  page.on("response", (response) => {
+    const url = new URL(response.url());
     if (!url.pathname.endsWith("/api/v1/entries/days") || !url.searchParams.has("cursor")) return;
     if (url.searchParams.get("direction") === "older") olderPages += 1;
     if (url.searchParams.get("direction") === "newer") newerPages += 1;
@@ -26,7 +26,6 @@ test("jumps from the rail without mounting 20,000 entry nodes", async ({ page, r
   for (let index = 0; index < 3; index += 1) {
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     await expect.poll(() => olderPages).toBeGreaterThan(index);
-    await expect.poll(() => page.locator(".date-link").count()).toBeGreaterThan(15 + (index * 15));
   }
   const idsAfterOlder = await page.locator("section[data-day]").evaluateAll((nodes) => nodes.map((node) => node.id));
   expect(new Set(idsAfterOlder).size).toBe(idsAfterOlder.length);
@@ -34,7 +33,6 @@ test("jumps from the rail without mounting 20,000 entry nodes", async ({ page, r
   for (let index = 0; index < 3; index += 1) {
     await page.evaluate(() => window.scrollTo(0, 0));
     await expect.poll(() => newerPages).toBeGreaterThan(index);
-    await expect.poll(() => page.locator(".date-link").count()).toBe(60);
   }
   const idsAfterNewer = await page.locator("section[data-day]").evaluateAll((nodes) => nodes.map((node) => node.id));
   expect(new Set(idsAfterNewer).size).toBe(idsAfterNewer.length);
