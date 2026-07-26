@@ -4,7 +4,7 @@ import { ImageEntryNotFoundError, ImageService, ImageValidationError, isSupporte
 
 export async function registerMediaRoutes(
   server: FastifyInstance,
-  images: ImageService,
+  images: () => ImageService,
 ): Promise<void> {
   server.post<{ Params: { id: string } }>("/api/v1/entries/:id/images", async (request, reply) => {
     const file = await request.file();
@@ -15,7 +15,7 @@ export async function registerMediaRoutes(
     }
 
     try {
-      const image = await images.ingest(request.params.id, file.file, file.mimetype);
+      const image = await images().ingest(request.params.id, file.file, file.mimetype);
       return reply.code(201).send({
         mediaId: image.mediaId,
         markdownUrl: `media:${image.mediaId}`,
@@ -30,7 +30,7 @@ export async function registerMediaRoutes(
   });
 
   server.get<{ Params: { id: string } }>("/api/v1/media/:id/display", async (request, reply) => {
-    const image = images.findDisplay(request.params.id);
+    const image = images().findDisplay(request.params.id);
     if (!image) return reply.code(404).send();
     return reply.type(image.mime).send(createReadStream(image.path));
   });

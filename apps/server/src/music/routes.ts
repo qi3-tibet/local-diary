@@ -11,14 +11,14 @@ export const MAX_MUSIC_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 export async function registerMusicRoutes(
   server: FastifyInstance,
-  music: MusicService,
-  recognition: MusicRecognitionService,
+  music: () => MusicService,
+  recognition: () => MusicRecognitionService,
   maxUploadBytes = MAX_MUSIC_UPLOAD_BYTES,
 ): Promise<void> {
   const attach = async (request: FastifyRequest<{ Params: { id: string } }>, reply: { code: (status: number) => { send: (payload?: unknown) => unknown } }) => {
     try {
       const file = await readSingleMusicFile(request, maxUploadBytes);
-      const attached = await music.attach(request.params.id, file.bytes, file.filename);
+      const attached = await music().attach(request.params.id, file.bytes, file.filename);
       return reply.code(201).send(toResponse(attached));
     } catch (error) {
       if (error instanceof MusicEntryNotFoundError) return reply.code(404).send();
@@ -39,7 +39,7 @@ export async function registerMusicRoutes(
     "/api/v1/entries/:id/music/recognition",
     async (request, reply) => {
       try {
-        return reply.send(await recognition.request(request.params.id));
+        return reply.send(await recognition().request(request.params.id));
       } catch (error) {
         return handleRecognitionError(error, reply);
       }
@@ -49,7 +49,7 @@ export async function registerMusicRoutes(
     "/api/v1/entries/:id/music/recognition/candidates",
     async (request, reply) => {
       try {
-        return reply.send({ items: recognition.listCandidates(request.params.id) });
+        return reply.send({ items: recognition().listCandidates(request.params.id) });
       } catch (error) {
         return handleRecognitionError(error, reply);
       }
@@ -63,7 +63,7 @@ export async function registerMusicRoutes(
         return reply.code(400).send({ error: "A valid candidate ID is required" });
       }
       try {
-        return reply.send(recognition.selectCandidate(request.params.id, candidateId));
+        return reply.send(recognition().selectCandidate(request.params.id, candidateId));
       } catch (error) {
         return handleRecognitionError(error, reply);
       }
@@ -75,7 +75,7 @@ export async function registerMusicRoutes(
       const patch = musicMetadataOverrideSchema.safeParse(request.body);
       if (!patch.success) return reply.code(400).send({ error: "Invalid music metadata" });
       try {
-        return reply.send(recognition.patchOverrides(request.params.id, patch.data));
+        return reply.send(recognition().patchOverrides(request.params.id, patch.data));
       } catch (error) {
         return handleRecognitionError(error, reply);
       }

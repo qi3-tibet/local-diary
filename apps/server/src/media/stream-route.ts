@@ -14,19 +14,19 @@ type ByteRange = { start: number; end: number };
 
 export async function registerMusicStreamRoute(
   server: FastifyInstance,
-  database: DiaryDatabase,
-  store: MediaStore,
+  database: () => DiaryDatabase,
+  store: () => MediaStore,
 ): Promise<void> {
   server.route<{ Params: { id: string } }>({
     method: ["GET", "HEAD"],
     url: "/api/v1/music/:id/stream",
     handler: async (request, reply) => {
-      const object = findMusicObject(database, request.params.id);
+      const object = findMusicObject(database(), request.params.id);
       if (!object) return reply.code(404).send();
 
       let handle: FileHandle;
       try {
-        handle = await open(store.pathFor(object.original_hash, object.original_extension), "r");
+        handle = await open(store().pathFor(object.original_hash, object.original_extension), "r");
       } catch {
         return unavailable(reply);
       }

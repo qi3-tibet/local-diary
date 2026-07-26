@@ -60,10 +60,10 @@ export function buildServer(options: ServerOptions = {}) {
   server.get("/api/v1/health", async () => ({ status: "ok", apiVersion: 1 }));
   void server.register(multipart);
   void registerEntryRoutes(server, () => service, () => entries);
-  void registerSearchRoutes(server, entries);
-  void registerMediaRoutes(server, images);
-  void registerMusicRoutes(server, music, recognition, options.musicUploadLimit);
-  void registerMusicStreamRoute(server, database, mediaStore);
+  void registerSearchRoutes(server, () => entries);
+  void registerMediaRoutes(server, () => images);
+  void registerMusicRoutes(server, () => music, () => recognition, options.musicUploadLimit);
+  void registerMusicStreamRoute(server, () => database, () => mediaStore);
   registerBackupRoutes(server, { snapshots: () => snapshots, temporaryRoot: path.join(dataRoot, ".temporary"), restoreContext: options.restoreContext ?? defaultRestoreContext });
   server.addHook("onClose", async () => database.close());
 
