@@ -186,12 +186,19 @@ function EditorForm({ entry, initialValue, draftId, onCancel, onComplete }: Edit
     }
   }
 
+  const busy = uploading || submitting;
+
+  function cancel(): void {
+    if (busy) return;
+    onCancel();
+  }
+
   return (
     <main className="editor-page">
       <form
         className="editor-form"
         aria-label="Diary editor"
-        aria-busy={uploading || submitting}
+        aria-busy={busy}
         onSubmit={(event) => void submit(event)}
       >
         <div className="editor-heading">
@@ -239,7 +246,7 @@ function EditorForm({ entry, initialValue, draftId, onCancel, onComplete }: Edit
 
         {error ? <p className="editor-error" role="alert">{error}</p> : null}
         <div className="editor-actions">
-          <button type="button" onClick={onCancel}>CANCEL</button>
+          <button type="button" disabled={busy} onClick={cancel}>CANCEL</button>
           <button type="submit" disabled={submitting}>
             {entry ? "SAVE" : "DONE"}
           </button>

@@ -92,7 +92,11 @@ test("tracks edits before and replacing the upload selection", async ({ page }) 
   await secondUpload.started;
   await selectText(body, "replace me");
   await body.type("kept note");
-  await body.press("End");
+  await body.press("Control+End");
+  await expect.poll(() => body.evaluate((node) => {
+    const field = node as HTMLTextAreaElement;
+    return field.selectionStart === field.value.length;
+  })).toBe(true);
   secondUpload.release();
 
   await expect(body).toHaveValue(
@@ -101,8 +105,15 @@ test("tracks edits before and replacing the upload selection", async ({ page }) 
   await expect(body).toBeFocused();
   await expect.poll(() => body.evaluate((node) => {
     const field = node as HTMLTextAreaElement;
-    return field.selectionStart === field.value.length;
-  })).toBe(true);
+    return {
+      atEnd: field.selectionStart === field.value.length
+        && field.selectionEnd === field.value.length,
+      focused: document.activeElement === field,
+    };
+  })).toEqual({
+    atEnd: true,
+    focused: true,
+  });
 });
 
 test("waits for a pending image before publishing", async ({ page }) => {
@@ -125,6 +136,50 @@ test("waits for a pending image before publishing", async ({ page }) => {
   await expect(image).toHaveCount(1);
   await expect(image).toHaveAttribute("alt", "portrait.png");
   await expect(published.getByText("Text stays with its image.")).toBeVisible();
+});
+
+test("cannot cancel while an image upload is pending", async ({ page }) => {
+  await openDraft(page, "Protected upload", "The upload remains attached.");
+  const body = page.getByLabel("Markdown body");
+  const pendingUpload = await holdNextUpload(page);
+  await placeCursorAfter(body, "attached.");
+  await uploadImage(page, "portrait.png", portraitPng);
+  await pendingUpload.started;
+
+  const cancel = page.getByRole("button", { name: "Cancel" });
+  await expect(cancel).toBeDisabled();
+  await cancel.evaluate((button) => {
+    button.removeAttribute("disabled");
+    (button as HTMLButtonElement).click();
+  });
+  await expect(page.getByLabel("Diary editor")).toBeVisible();
+
+  pendingUpload.release();
+  await expect(body).toHaveValue(/attached\.!\[portrait\.png\]\(media:[^)]+\)/);
+  await page.getByRole("button", { name: "Done" }).click();
+
+  const published = page.getByRole("article").filter({ hasText: "The upload remains attached." });
+  await expect(published.locator(".entry-body img")).toHaveCount(1);
+});
+
+test("cannot cancel after publishing has begun", async ({ page }) => {
+  await openDraft(page, "Protected publish", "Publishing remains in one lifecycle.");
+  const pendingPublish = await holdNextRequest(page, "**/api/v1/draft/publish");
+  const done = page.getByRole("button", { name: "Done" });
+  await done.click();
+  await pendingPublish.started;
+
+  const cancel = page.getByRole("button", { name: "Cancel" });
+  await expect(cancel).toBeDisabled();
+  await cancel.evaluate((button) => {
+    button.removeAttribute("disabled");
+    (button as HTMLButtonElement).click();
+  });
+  await expect(page.getByLabel("Diary editor")).toBeVisible();
+
+  pendingPublish.release();
+  await expect(page.getByText("Publishing remains in one lifecycle.")).toBeVisible();
+  await expect(page.getByLabel("Diary editor")).not.toBeVisible();
 });
 
 async function openDraft(page: Page, title: string, markdown: string): Promise<void> {
@@ -156,11 +211,18 @@ async function holdNextUpload(page: Page): Promise<{
   started: Promise<void>;
   release(): void;
 }> {
+  return holdNextRequest(page, "**/api/v1/entries/*/images");
+}
+
+async function holdNextRequest(page: Page, pattern: string): Promise<{
+  started: Promise<void>;
+  release(): void;
+}> {
   let release!: () => void;
   let markStarted!: () => void;
   const released = new Promise<void>((resolve) => { release = resolve; });
   const started = new Promise<void>((resolve) => { markStarted = resolve; });
-  await page.route("**/api/v1/entries/*/images", async (route) => {
+  await page.route(pattern, async (route) => {
     markStarted();
     await released;
     await route.continue();
