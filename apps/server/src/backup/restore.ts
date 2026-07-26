@@ -9,13 +9,13 @@ export type RestorePhase = "VALIDATING" | "SAFETY_BACKUP" | "RESTORING" | "REBUI
 export type RestoreCoordinator = {
   /** Blocks new writers and waits for current writers; returns a release function. */
   acquireBarrier: () => Promise<() => Promise<void> | void>;
-  createSafetySnapshot: () => Promise<void>;
+  createSafetySnapshot: () => Promise<string | void>;
   quiesce: () => Promise<void>;
   reopen: () => Promise<void>;
   rebuildDerivedData?: () => Promise<void>;
 };
 export type RestoreOperations = { rename?: (from: string, to: string) => Promise<void>; remove?: (pathname: string) => Promise<void>; afterLeaseRelease?: () => Promise<void>; };
-export type RestoreContext = { dataRoot: string; temporaryRoot: string; coordinator?: RestoreCoordinator; onProgress?: (phase: RestorePhase) => void; operations?: RestoreOperations; };
+export type RestoreContext = { dataRoot: string; temporaryRoot: string; coordinator?: RestoreCoordinator; onProgress?: (phase: RestorePhase) => void; onSafetySnapshot?: (id: string) => void; operations?: RestoreOperations; };
 
 const restoreLocks = new Map<string, Promise<void>>(); const PROCESS_NONCE = randomUUID();
 
@@ -45,7 +45,10 @@ export async function restoreArchive(archivePath: string, context: RestoreContex
       let resumeGate = true;
       try {
         context.onProgress?.("SAFETY_BACKUP");
-        if (live) await context.coordinator!.createSafetySnapshot();
+        if (live) {
+          const safetySnapshotId = await context.coordinator!.createSafetySnapshot();
+          if (safetySnapshotId) context.onSafetySnapshot?.(safetySnapshotId);
+        }
         await context.coordinator?.quiesce();
         quiesced = Boolean(context.coordinator);
         const root = await lstat(dataRoot).catch(missing);

@@ -94,6 +94,26 @@ describe("backup snapshots", () => {
     expect(retained[0]?.id).toBe(left.id);
   });
 
+  it("takes a fresh restore-safety snapshot without replacing the same-day daily snapshot", async () => {
+    const { database, snapshots } = fixture();
+    const daily = await snapshots.create("2026-07-26");
+    database.exec("CREATE TABLE restore_safety_probe (value TEXT NOT NULL)");
+    database.prepare("INSERT INTO restore_safety_probe (value) VALUES (?)").run("written after daily backup");
+
+    const safety = await snapshots.createSafetySnapshot("2026-07-26");
+    const destination = path.join(mkdtempSync(path.join(tmpdir(), "local-diary-safety-restore-")), "restored");
+    roots.push(path.dirname(destination));
+    await snapshots.restoreSafety(safety.id, destination);
+    const restored = createDiaryDatabase(destination);
+    expect(restored.prepare("SELECT value FROM restore_safety_probe").get()).toEqual({ value: "written after daily backup" });
+    restored.close();
+
+    expect(safety.id).not.toBe(daily.id);
+    expect(safety.databaseObject).not.toBe(daily.databaseObject);
+    expect((await snapshots.list()).map((item) => item.id)).toContain(daily.id);
+    expect((await snapshots.listSafety()).map((item) => item.id)).toContain(safety.id);
+  });
+
   it("cleans only recognized interrupted backup database artifacts before a new run", async () => {
     const { backupRoot, snapshots } = fixture();
     const temporary = path.join(backupRoot, ".tmp");

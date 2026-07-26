@@ -51,6 +51,7 @@ export class SnapshotService {
   private readonly dataRoot: string;
   private readonly backupRoot: string;
   private readonly manifestsRoot: string;
+  private readonly safetyManifestsRoot: string;
   private readonly database: DiaryDatabase;
   private readonly heartbeatLeasePath: (path: string) => Promise<void>;
   private readonly beforeLeaseStealClaim: (() => Promise<void>) | undefined;
@@ -67,6 +68,7 @@ export class SnapshotService {
     this.dataRoot = resolve(options.dataRoot);
     this.backupRoot = resolve(options.backupRoot);
     this.manifestsRoot = join(this.backupRoot, "manifests");
+    this.safetyManifestsRoot = join(this.backupRoot, "restore-safety");
     this.database = options.database;
     this.now = options.now ?? (() => new Date());
     this.heartbeatLeasePath = options.leaseHeartbeat ?? (async (pathname) => {
@@ -85,6 +87,29 @@ export class SnapshotService {
 
   async create(day: string): Promise<SnapshotInfo> {
     return (await this.ensure(day)).snapshot;
+  }
+
+  /** An independent pre-restore snapshot; daily idempotence must never reuse it. */
+  async createSafetySnapshot(day: string): Promise<SnapshotInfo> {
+    if (!DAY.test(day)) throw new Error("Invalid Beijing backup day");
+    return this.withLock(async (lease) => {
+      await this.cleanupInterruptedArtifacts();
+      await this.collectUnreferencedObjects();
+      const manifest = snapshotManifestSchema.parse({
+        format: "local-diary-snapshot", version: 1, id: randomUUID(), day,
+        createdAt: new Date().toISOString(), databaseObject: await this.backupDatabase(lease), mediaObjects: await this.inventoryMedia(),
+      });
+      const prepared = await this.prepareManifest(manifest, this.safetyManifestsRoot);
+      try {
+        await this.beginManifestCommit(lease);
+        await this.publishManifest(prepared);
+      } catch (error) {
+        await rm(prepared.temporary, { force: true });
+        throw error;
+      }
+      await this.pruneSafety();
+      return asInfo(manifest);
+    });
   }
 
   async ensure(day: string): Promise<{ snapshot: SnapshotInfo; created: boolean }> {
@@ -122,22 +147,38 @@ export class SnapshotService {
   }
 
   async list(): Promise<SnapshotInfo[]> {
-    const directory = await lstat(this.manifestsRoot).catch((error) => isMissing(error) ? null : Promise.reject(error));
+    return this.listAt(this.manifestsRoot);
+  }
+
+  async listSafety(): Promise<SnapshotInfo[]> {
+    return this.listAt(this.safetyManifestsRoot);
+  }
+
+  private async listAt(root: string): Promise<SnapshotInfo[]> {
+    const directory = await lstat(root).catch((error) => isMissing(error) ? null : Promise.reject(error));
     if (!directory) return [];
     if (!directory.isDirectory() || directory.isSymbolicLink()) throw new Error("BACKUP_UNSAFE_MANIFEST_PATH");
     const manifests: SnapshotManifest[] = [];
-    for (const file of await readdir(this.manifestsRoot, { withFileTypes: true })) {
+    for (const file of await readdir(root, { withFileTypes: true })) {
       if (file.isFile() && INTERRUPTED_MANIFEST.test(file.name)) continue;
       if (!file.isFile() || file.isSymbolicLink() || !/^[0-9a-f-]{36}\.json$/.test(file.name)) {
         throw new Error("BACKUP_UNSAFE_MANIFEST_PATH");
       }
-      manifests.push(await this.readManifest(join(this.manifestsRoot, file.name)));
+      manifests.push(await this.readManifest(join(root, file.name)));
     }
     return manifests.sort(compareManifests).map(asInfo);
   }
 
   async restore(id: string, target: string): Promise<void> {
-    const manifest = await this.get(id);
+    return this.restoreFrom(id, target, this.manifestsRoot);
+  }
+
+  async restoreSafety(id: string, target: string): Promise<void> {
+    return this.restoreFrom(id, target, this.safetyManifestsRoot);
+  }
+
+  private async restoreFrom(id: string, target: string, root: string): Promise<void> {
+    const manifest = await this.getAt(id, root);
     const resolvedTarget = resolve(target);
     const parent = dirname(resolvedTarget);
     const parentStat = await lstat(parent).catch((error) => isMissing(error) ? null : Promise.reject(error));
@@ -223,9 +264,9 @@ export class SnapshotService {
     return result;
   }
 
-  private async prepareManifest(manifest: SnapshotManifest): Promise<{ temporary: string; destination: string }> {
-    await mkdir(this.manifestsRoot, { recursive: true });
-    const destination = this.manifestPath(manifest.id);
+  private async prepareManifest(manifest: SnapshotManifest, root = this.manifestsRoot): Promise<{ temporary: string; destination: string }> {
+    await mkdir(root, { recursive: true });
+    const destination = this.manifestPath(manifest.id, root);
     const temporary = `${destination}.${randomUUID()}.tmp`;
     const contents = `${JSON.stringify(manifest)}\n`;
     if (this.writeManifestTemporary) {
@@ -263,9 +304,16 @@ export class SnapshotService {
     await this.collectUnreferencedObjects();
   }
 
+  private async pruneSafety(): Promise<void> {
+    const all = await this.listSafety();
+    const keep = new Set(all.sort(compareManifests).slice(-5).map((manifest) => manifest.id));
+    for (const manifest of all) if (!keep.has(manifest.id)) await rm(this.manifestPath(manifest.id, this.safetyManifestsRoot), { force: true });
+    await this.collectUnreferencedObjects();
+  }
+
   private async collectUnreferencedObjects(): Promise<void> {
     const references = new Set<string>();
-    for (const manifest of await this.list()) {
+    for (const manifest of [...await this.list(), ...await this.listSafety()]) {
       references.add(manifest.databaseObject);
       manifest.mediaObjects.forEach((media) => references.add(media.hash));
     }
@@ -314,10 +362,10 @@ export class SnapshotService {
     }
   }
 
-  private async get(id: string): Promise<SnapshotManifest> {
+  private async getAt(id: string, root = this.manifestsRoot): Promise<SnapshotManifest> {
     if (!/^[0-9a-f-]{36}$/.test(id)) throw new Error("BACKUP_SNAPSHOT_NOT_FOUND");
     try {
-      return await this.readManifest(this.manifestPath(id));
+      return await this.readManifest(this.manifestPath(id, root));
     } catch (error) {
       if (isMissing(error)) throw new Error("BACKUP_SNAPSHOT_NOT_FOUND");
       throw error;
@@ -340,8 +388,8 @@ export class SnapshotService {
     }
   }
 
-  private manifestPath(id: string): string {
-    return join(this.manifestsRoot, `${id}.json`);
+  private manifestPath(id: string, root = this.manifestsRoot): string {
+    return join(root, `${id}.json`);
   }
 
   private async withLock<T>(work: (lease: SnapshotLease) => Promise<T>): Promise<T> {

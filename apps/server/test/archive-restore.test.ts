@@ -207,6 +207,16 @@ describe("complete archive restore", () => {
     const body = Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="archive"; filename="archive.zip"\r\nContent-Type: application/zip\r\n\r\n`), bytes, Buffer.from(`\r\n--${boundary}--\r\n`)]);
     const restored = await server.inject({ method: "POST", url: "/api/v1/backups/restore", headers: { "content-type": `multipart/form-data; boundary=${boundary}` }, payload: body });
     expect(restored.body).toContain("DONE");
+    const safetyDatabase = createDiaryDatabase(dataRoot);
+    const safetySnapshots = new SnapshotService({ dataRoot, backupRoot, database: safetyDatabase });
+    const safety = (await safetySnapshots.listSafety()).at(-1);
+    expect(safety?.id).not.toBe(snapshot.id);
+    expect(safety?.databaseObject).not.toBe(snapshot.databaseObject);
+    const safetyRoot = temp("archive-safety-");
+    await safetySnapshots.restoreSafety(safety!.id, join(safetyRoot, "restored"));
+    const recovered = createDiaryDatabase(join(safetyRoot, "restored"));
+    expect(recovered.prepare("SELECT title FROM entries").get()).toEqual({ title: "Changed" });
+    recovered.close(); safetyDatabase.close();
     expect(JSON.parse((await server.inject({ method: "GET", url: "/api/v1/entries" })).body)[0].markdown).toBe("archived searchable body");
     expect(JSON.parse((await server.inject({ method: "GET", url: "/api/v1/search?q=kept" })).body).items).toHaveLength(1);
     const next = await server.inject({ method: "PUT", url: "/api/v1/draft", payload: { title: "After", markdown: "after restore", tags: [] } });

@@ -54,7 +54,7 @@ export function buildServer(options: ServerOptions = {}) {
   server.addHook("onResponse", async (request) => { if (!(request as { restoreGate?: boolean }).restoreGate) return; active -= 1; if (active === 0) drained?.(); });
   const defaultRestoreContext = () => ({ dataRoot, temporaryRoot: restoreTemporaryRoot, coordinator: {
     acquireBarrier: async () => { blocked = true; if (active > 0) { drain = new Promise<void>((resolvePromise) => { drained = resolvePromise; }); await drain; } return () => { blocked = false; }; },
-    createSafetySnapshot: async () => { await snapshots.create(clock.dayKey(clock.publishedAt())); },
+    createSafetySnapshot: async () => (await snapshots.createSafetySnapshot(clock.dayKey(clock.publishedAt()))).id,
     quiesce: async () => { database.close(); }, reopen: async () => { rebuild(); }, rebuildDerivedData: async () => {},
   } });
 
