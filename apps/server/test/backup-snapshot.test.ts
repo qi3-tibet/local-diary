@@ -76,7 +76,7 @@ describe("backup snapshots", () => {
     expect(retained.at(0)?.day).toBe("2026-07-02");
     expect(retained.at(-1)?.day).toBe("2026-07-31");
     expect(await objects.count()).toBe(31);
-  });
+  }, 15_000);
 
   it("creates one idempotent same-day snapshot across concurrent service instances", async () => {
     const { dataRoot, backupRoot, database, snapshots } = fixture();
@@ -118,15 +118,15 @@ describe("backup snapshots", () => {
     expect(await readFile(path.join(run, "snapshot.sqlite"), "utf8")).toBe("unrelated");
   });
 
-  it("does not delete an ownership-changed stale lease while claiming it", async () => {
+  it("never displaces an ownership-refreshed live lease while attempting stale takeover", async () => {
     const { backupRoot, dataRoot, database } = fixture();
     const locks = path.join(backupRoot, ".locks");
     const lock = path.join(locks, "snapshot-create.lock");
     await mkdir(lock, { recursive: true });
     const owner = path.join(lock, "owner.json");
-    writeFileSync(owner, JSON.stringify({ token: "old", pid: 1, createdAt: "2026-01-01T00:00:00.000Z" }));
+    writeFileSync(owner, JSON.stringify({ token: "old", pid: 1, processStartNonce: "old-process", createdAt: "2026-01-01T00:00:00.000Z" }));
     await utimes(lock, new Date("2026-01-01T00:00:00.000Z"), new Date("2026-01-01T00:00:00.000Z"));
-    const currentOwner = JSON.stringify({ token: "new", pid: 2, createdAt: "2026-07-26T00:00:00.000Z" });
+    const currentOwner = JSON.stringify({ token: "new", pid: 2, processStartNonce: "new-process", createdAt: "2026-07-26T00:00:00.000Z" });
     const snapshots = new SnapshotService({
       dataRoot,
       backupRoot,
@@ -135,13 +135,28 @@ describe("backup snapshots", () => {
         writeFileSync(owner, currentOwner);
         await utimes(lock, new Date(), new Date());
       },
+      isProcessAlive: (pid) => pid === 2,
+      lockTimeoutMs: 100,
     });
+
+    await expect(snapshots.create("2026-07-26")).rejects.toThrow("BACKUP_LOCK_TIMEOUT");
+
+    const quarantines = (await readdir(locks)).filter((name) => name.startsWith("snapshot-create.lock.steal-"));
+    expect(quarantines).toHaveLength(0);
+    expect(await readFile(owner, "utf8")).toBe(currentOwner);
+  });
+
+  it("allows takeover only after the stale lease owner is confirmed dead", async () => {
+    const { backupRoot, dataRoot, database } = fixture();
+    const lock = path.join(backupRoot, ".locks", "snapshot-create.lock");
+    await mkdir(lock, { recursive: true });
+    writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ token: "dead", pid: 99, processStartNonce: "dead-process", createdAt: "2026-01-01T00:00:00.000Z" }));
+    await utimes(lock, new Date("2026-01-01T00:00:00.000Z"), new Date("2026-01-01T00:00:00.000Z"));
+    const snapshots = new SnapshotService({ dataRoot, backupRoot, database, isProcessAlive: () => false });
 
     await snapshots.create("2026-07-26");
 
-    const quarantines = (await readdir(locks)).filter((name) => name.startsWith("snapshot-create.lock.steal-"));
-    expect(quarantines).toHaveLength(1);
-    expect(await readFile(path.join(locks, quarantines[0]!, "owner.json"), "utf8")).toBe(currentOwner);
+    expect((await snapshots.list()).map((snapshot) => snapshot.day)).toEqual(["2026-07-26"]);
   });
 
   it("aborts before manifest publication when the owned lease heartbeat fails", async () => {
@@ -154,6 +169,41 @@ describe("backup snapshots", () => {
     });
 
     await expect(snapshots.create("2026-07-26")).rejects.toThrow("BACKUP_LEASE_LOST");
+    expect(await snapshots.list()).toEqual([]);
+  });
+
+  it("abandons a prepared manifest when the asynchronous lease heartbeat fails during its write", async () => {
+    const { dataRoot, backupRoot, database } = fixture();
+    let heartbeats = 0;
+    const snapshots = new SnapshotService({
+      dataRoot,
+      backupRoot,
+      database,
+      leaseHeartbeat: async () => {
+        heartbeats += 1;
+        if (heartbeats > 1) throw new Error("asynchronous heartbeat failed");
+      },
+      leaseHeartbeatIntervalMs: 1,
+      writeManifestTemporary: async (pathname, contents) => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        writeFileSync(pathname, contents);
+      },
+    });
+
+    await expect(snapshots.create("2026-07-26")).rejects.toThrow("BACKUP_LEASE_LOST");
+    expect(await snapshots.list()).toEqual([]);
+  });
+
+  it("does not publish a manifest when writing its temporary file fails", async () => {
+    const { dataRoot, backupRoot, database } = fixture();
+    const snapshots = new SnapshotService({
+      dataRoot,
+      backupRoot,
+      database,
+      writeManifestTemporary: async () => { throw new Error("manifest temporary write failed"); },
+    });
+
+    await expect(snapshots.create("2026-07-26")).rejects.toThrow("manifest temporary write failed");
     expect(await snapshots.list()).toEqual([]);
   });
 

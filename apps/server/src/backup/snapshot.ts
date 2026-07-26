@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, rename, rm, utimes, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, readFile, rename, rm, utimes, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { snapshotManifestSchema, type SnapshotManifest } from "@diary/contracts";
 import type { DiaryDatabase } from "../db/client.js";
@@ -16,6 +16,7 @@ const RUN_FORMAT = "local-diary-backup-run";
 const SNAPSHOT_LOCK_WAIT_MS = 25;
 const SNAPSHOT_LOCK_TIMEOUT_MS = 30_000;
 const SNAPSHOT_LOCK_STALE_MS = 10 * 60_000;
+const PROCESS_START_NONCE = randomUUID();
 
 export type SnapshotInfo = SnapshotManifest & { objects: string[] };
 
@@ -26,6 +27,12 @@ export type SnapshotServiceOptions = {
   leaseHeartbeat?: (path: string) => Promise<void>;
   beforeLeaseStealClaim?: () => Promise<void>;
   now?: () => Date;
+  isProcessAlive?: (pid: number) => boolean;
+  processId?: number;
+  processStartNonce?: string;
+  lockTimeoutMs?: number;
+  leaseHeartbeatIntervalMs?: number;
+  writeManifestTemporary?: (path: string, contents: string) => Promise<void>;
 };
 
 type SnapshotLease = {
@@ -46,6 +53,12 @@ export class SnapshotService {
   private readonly heartbeatLeasePath: (path: string) => Promise<void>;
   private readonly beforeLeaseStealClaim: (() => Promise<void>) | undefined;
   private readonly now: () => Date;
+  private readonly isProcessAlive: (pid: number) => boolean;
+  private readonly processId: number;
+  private readonly processStartNonce: string;
+  private readonly lockTimeoutMs: number;
+  private readonly leaseHeartbeatIntervalMs: number;
+  private readonly writeManifestTemporary: ((path: string, contents: string) => Promise<void>) | undefined;
   readonly objects: BackupObjectStore;
 
   constructor(options: SnapshotServiceOptions) {
@@ -59,6 +72,12 @@ export class SnapshotService {
       await utimes(pathname, now, now);
     });
     this.beforeLeaseStealClaim = options.beforeLeaseStealClaim;
+    this.isProcessAlive = options.isProcessAlive ?? defaultIsProcessAlive;
+    this.processId = options.processId ?? process.pid;
+    this.processStartNonce = options.processStartNonce ?? PROCESS_START_NONCE;
+    this.lockTimeoutMs = options.lockTimeoutMs ?? SNAPSHOT_LOCK_TIMEOUT_MS;
+    this.leaseHeartbeatIntervalMs = options.leaseHeartbeatIntervalMs ?? 60_000;
+    this.writeManifestTemporary = options.writeManifestTemporary;
     this.objects = new BackupObjectStore(this.backupRoot);
   }
 
@@ -87,8 +106,14 @@ export class SnapshotService {
         mediaObjects,
       });
 
-      await this.writeManifest(manifest);
-      await this.refreshLease(lease);
+      const preparedManifest = await this.prepareManifest(manifest);
+      try {
+        await this.beginManifestCommit(lease);
+        await this.publishManifest(preparedManifest);
+      } catch (error) {
+        await rm(preparedManifest.temporary, { force: true });
+        throw error;
+      }
       await this.prune();
       return { snapshot: asInfo(manifest), created: true };
     });
@@ -196,12 +221,32 @@ export class SnapshotService {
     return result;
   }
 
-  private async writeManifest(manifest: SnapshotManifest): Promise<void> {
+  private async prepareManifest(manifest: SnapshotManifest): Promise<{ temporary: string; destination: string }> {
     await mkdir(this.manifestsRoot, { recursive: true });
     const destination = this.manifestPath(manifest.id);
     const temporary = `${destination}.${randomUUID()}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(manifest)}\n`, { flag: "wx" });
-    await rename(temporary, destination);
+    const contents = `${JSON.stringify(manifest)}\n`;
+    if (this.writeManifestTemporary) {
+      await this.writeManifestTemporary(temporary, contents);
+    } else {
+      const handle = await open(temporary, "wx");
+      try {
+        await handle.writeFile(contents);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+    }
+    return { temporary, destination };
+  }
+
+  private async beginManifestCommit(lease: SnapshotLease): Promise<void> {
+    clearInterval(lease.heartbeat);
+    await this.assertLeaseOwnership(lease);
+  }
+
+  private async publishManifest(prepared: { temporary: string; destination: string }): Promise<void> {
+    await rename(prepared.temporary, prepared.destination);
   }
 
   private async prune(): Promise<void> {
@@ -323,16 +368,22 @@ export class SnapshotService {
     await mkdir(locksRoot, { recursive: true });
     const root = await lstat(locksRoot);
     if (!root.isDirectory() || root.isSymbolicLink()) throw new Error("BACKUP_UNSAFE_LOCK_PATH");
+    await this.cleanupStealQuarantines(locksRoot);
     const lock = join(locksRoot, "snapshot-create.lock");
-    const deadline = Date.now() + SNAPSHOT_LOCK_TIMEOUT_MS;
+    const deadline = Date.now() + this.lockTimeoutMs;
     while (Date.now() < deadline) {
       try {
         await mkdir(lock);
         const token = randomUUID();
         const owner = join(lock, "owner.json");
-        await writeFile(owner, JSON.stringify({ token, pid: process.pid, createdAt: this.now().toISOString() }), { flag: "wx" });
+        await writeFile(owner, JSON.stringify({
+          token,
+          pid: this.processId,
+          processStartNonce: this.processStartNonce,
+          createdAt: this.now().toISOString(),
+        }), { flag: "wx" });
         const lease: SnapshotLease = { lock, owner, token, lost: null, heartbeat: undefined!, runMarkers: new Set() };
-        lease.heartbeat = setInterval(() => { void this.refreshLease(lease).catch((error) => { lease.lost = asLeaseLost(error); }); }, 60_000);
+        lease.heartbeat = setInterval(() => { void this.refreshLease(lease).catch((error) => { lease.lost = asLeaseLost(error); }); }, this.leaseHeartbeatIntervalMs);
         return lease;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -357,8 +408,12 @@ export class SnapshotService {
 
   private async tryClaimStaleLock(lock: string, observedMtimeMs: number): Promise<void> {
     const capturedOwner = await readLeaseOwner(join(lock, "owner.json"));
-    if (!capturedOwner?.token) return;
+    if (!capturedOwner || this.isProcessAlive(capturedOwner.pid)) return;
     await this.beforeLeaseStealClaim?.();
+    const currentStat = await lstat(lock).catch((error) => isMissing(error) ? null : Promise.reject(error));
+    const currentOwner = await readLeaseOwner(join(lock, "owner.json"));
+    if (!currentStat || currentStat.mtimeMs !== observedMtimeMs || !sameLeaseOwner(currentOwner, capturedOwner)
+      || this.isProcessAlive(capturedOwner.pid)) return;
     const quarantine = `${lock}.steal-${randomUUID()}`;
     try {
       await rename(lock, quarantine);
@@ -368,18 +423,14 @@ export class SnapshotService {
     }
     const claimedStat = await lstat(quarantine).catch((error) => isMissing(error) ? null : Promise.reject(error));
     const claimedOwner = await readLeaseOwner(join(quarantine, "owner.json"));
-    if (claimedStat && claimedStat.mtimeMs === observedMtimeMs && claimedOwner?.token === capturedOwner.token) {
+    if (claimedStat && claimedStat.mtimeMs === observedMtimeMs && sameLeaseOwner(claimedOwner, capturedOwner)
+      && !this.isProcessAlive(capturedOwner.pid)) {
       await rm(quarantine, { recursive: true, force: true });
     }
   }
 
   private async refreshLease(lease: SnapshotLease): Promise<void> {
-    if (lease.lost) throw lease.lost;
-    const owner = await readLeaseOwner(lease.owner);
-    if (owner?.token !== lease.token) {
-      lease.lost = new Error("BACKUP_LEASE_LOST");
-      throw lease.lost;
-    }
+    await this.assertLeaseOwnership(lease);
     try {
       await this.heartbeatLeasePath(lease.lock);
       for (const marker of lease.runMarkers) {
@@ -389,6 +440,28 @@ export class SnapshotService {
     } catch (error) {
       lease.lost = asLeaseLost(error);
       throw lease.lost;
+    }
+  }
+
+  private async assertLeaseOwnership(lease: SnapshotLease): Promise<void> {
+    if (lease.lost) throw lease.lost;
+    const owner = await readLeaseOwner(lease.owner);
+    if (!owner || owner.token !== lease.token || owner.pid !== this.processId || owner.processStartNonce !== this.processStartNonce) {
+      lease.lost = new Error("BACKUP_LEASE_LOST");
+      throw lease.lost;
+    }
+  }
+
+  private async cleanupStealQuarantines(locksRoot: string): Promise<void> {
+    for (const item of await readdir(locksRoot, { withFileTypes: true })) {
+      if (!item.isDirectory() || item.isSymbolicLink() || !/^snapshot-create\.lock\.steal-[0-9a-f-]{36}$/.test(item.name)) continue;
+      const quarantine = join(locksRoot, item.name);
+      const owner = await readLeaseOwner(join(quarantine, "owner.json"));
+      const children = await readdir(quarantine, { withFileTypes: true });
+      if (owner && !this.isProcessAlive(owner.pid) && children.length === 1 && children[0]!.name === "owner.json"
+        && children[0]!.isFile() && !children[0]!.isSymbolicLink()) {
+        await rm(quarantine, { recursive: true, force: true });
+      }
     }
   }
 
@@ -453,12 +526,18 @@ function isMissing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === "ENOENT";
 }
 
-async function readLeaseOwner(pathname: string): Promise<{ token: string } | null> {
+type LeaseOwner = { token: string; pid: number; processStartNonce: string };
+
+async function readLeaseOwner(pathname: string): Promise<LeaseOwner | null> {
   const stat = await lstat(pathname).catch((error) => isMissing(error) ? null : Promise.reject(error));
   if (!stat || !stat.isFile() || stat.isSymbolicLink()) return null;
   try {
-    const parsed = JSON.parse(await readFile(pathname, "utf8")) as { token?: unknown };
-    return typeof parsed.token === "string" && parsed.token.length > 0 ? { token: parsed.token } : null;
+    const parsed = JSON.parse(await readFile(pathname, "utf8")) as { token?: unknown; pid?: unknown; processStartNonce?: unknown };
+    return typeof parsed.token === "string" && parsed.token.length > 0
+      && typeof parsed.pid === "number" && Number.isInteger(parsed.pid) && parsed.pid > 0
+      && typeof parsed.processStartNonce === "string" && parsed.processStartNonce.length > 0
+      ? { token: parsed.token, pid: parsed.pid, processStartNonce: parsed.processStartNonce }
+      : null;
   } catch {
     return null;
   }
@@ -485,4 +564,17 @@ function asLeaseLost(error: unknown): Error {
   return error instanceof Error && error.message === "BACKUP_LEASE_LOST"
     ? error
     : new Error("BACKUP_LEASE_LOST", { cause: error });
+}
+
+function sameLeaseOwner(left: LeaseOwner | null, right: LeaseOwner): boolean {
+  return left?.token === right.token && left.pid === right.pid && left.processStartNonce === right.processStartNonce;
+}
+
+function defaultIsProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
