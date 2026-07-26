@@ -426,15 +426,6 @@ a:focus-visible {
   position: relative;
 }
 
-.image-input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
 .image-glyph {
   display: grid;
   width: 30px;

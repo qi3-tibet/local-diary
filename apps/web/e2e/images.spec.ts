@@ -61,6 +61,70 @@ test("preserves writing added while an image is uploading", async ({ page }) => 
   await expect(body).toHaveValue(
     /Opening paragraph\.!\[portrait\.png\]\(media:[^)]+\)\n\nWritten during upload\./,
   );
+  await expect(body).toBeFocused();
+  await expect.poll(() => body.evaluate((node) => {
+    const field = node as HTMLTextAreaElement;
+    return field.selectionStart === field.value.length;
+  })).toBe(true);
+});
+
+test("tracks edits before and replacing the upload selection", async ({ page }) => {
+  await openDraft(page, "Tracked image", "Alpha Before replace me after Omega");
+  const body = page.getByLabel("Markdown body");
+
+  const firstUpload = await holdNextUpload(page);
+  await placeCursorAfter(body, "Alpha");
+  await uploadImage(page, "portrait.png", portraitPng);
+  await firstUpload.started;
+  await body.evaluate((node) => {
+    const field = node as HTMLTextAreaElement;
+    field.setSelectionRange(0, 0);
+  });
+  await body.type("Prefix ");
+  firstUpload.release();
+  await expect(body).toHaveValue(
+    /Prefix Alpha!\[portrait\.png\]\(media:[^)]+\) Before replace me after Omega/,
+  );
+
+  const secondUpload = await holdNextUpload(page);
+  await selectText(body, "replace me");
+  await uploadImage(page, "landscape.png", landscapePng);
+  await secondUpload.started;
+  await selectText(body, "replace me");
+  await body.type("kept note");
+  await body.press("End");
+  secondUpload.release();
+
+  await expect(body).toHaveValue(
+    /Before kept note!\[landscape\.png\]\(media:[^)]+\) after Omega/,
+  );
+  await expect(body).toBeFocused();
+  await expect.poll(() => body.evaluate((node) => {
+    const field = node as HTMLTextAreaElement;
+    return field.selectionStart === field.value.length;
+  })).toBe(true);
+});
+
+test("waits for a pending image before publishing", async ({ page }) => {
+  await openDraft(page, "Wait for image", "Text stays with its image.");
+  const body = page.getByLabel("Markdown body");
+  const pendingUpload = await holdNextUpload(page);
+  await placeCursorAfter(body, "image.");
+  await uploadImage(page, "portrait.png", portraitPng);
+  await pendingUpload.started;
+
+  const done = page.getByRole("button", { name: "Done" });
+  await done.click();
+  await expect(done).toBeDisabled();
+  await expect(page.getByLabel("Diary editor")).toBeVisible();
+
+  pendingUpload.release();
+
+  const published = page.getByRole("article").filter({ hasText: "Text stays with its image." });
+  const image = published.locator(".entry-body img");
+  await expect(image).toHaveCount(1);
+  await expect(image).toHaveAttribute("alt", "portrait.png");
+  await expect(published.getByText("Text stays with its image.")).toBeVisible();
 });
 
 async function openDraft(page: Page, title: string, markdown: string): Promise<void> {
@@ -77,6 +141,31 @@ async function placeCursorAfter(textarea: Locator, marker: string): Promise<void
     element.focus();
     element.setSelectionRange(cursor, cursor);
   }, marker);
+}
+
+async function selectText(textarea: Locator, text: string): Promise<void> {
+  await textarea.evaluate((node, value) => {
+    const element = node as HTMLTextAreaElement;
+    const start = element.value.indexOf(value);
+    element.focus();
+    element.setSelectionRange(start, start + value.length);
+  }, text);
+}
+
+async function holdNextUpload(page: Page): Promise<{
+  started: Promise<void>;
+  release(): void;
+}> {
+  let release!: () => void;
+  let markStarted!: () => void;
+  const released = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { markStarted = resolve; });
+  await page.route("**/api/v1/entries/*/images", async (route) => {
+    markStarted();
+    await released;
+    await route.continue();
+  }, { times: 1 });
+  return { started, release };
 }
 
 async function uploadImage(page: Page, name: string, buffer: Buffer): Promise<void> {

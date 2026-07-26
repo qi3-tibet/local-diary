@@ -6,6 +6,12 @@ import { DiaryMarkdown } from "../diary/EntryBody";
 import { ImageInsert } from "./ImageInsert";
 import { insertAtSelection } from "./insert-at-selection";
 import { ModeGlyph } from "./ModeGlyph";
+import {
+  transformSelectionAfterReplacement,
+  transformUploadAnchor,
+  transformUploadAnchorAfterReplacement,
+  type TextRange,
+} from "./selection-anchor";
 import { useSilentDraft } from "./useSilentDraft";
 
 const emptyDraft: DraftInput = {
@@ -29,9 +35,19 @@ function EditorForm({ entry, initialValue, draftId, onCancel, onComplete }: Edit
   const [value, setValue] = useState(initialValue);
   const [preview, setPreview] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string>();
   const textarea = useRef<HTMLTextAreaElement>(null);
   const uploadEntryId = useRef(entry?.id ?? draftId);
+  const latestValue = useRef(initialValue);
+  const interactionRevision = useRef(0);
+  const uploadAnchor = useRef<{
+    range: TextRange;
+    revision: number;
+    affinity: "left" | "right";
+  } | null>(null);
+  const pendingInputRange = useRef<TextRange | null>(null);
+  const pendingUpload = useRef<Promise<void> | null>(null);
   const isDraft = !entry;
 
   const draftPersistence = useSilentDraft(value, api.saveDraft, isDraft && !submitting);
@@ -39,27 +55,117 @@ function EditorForm({ entry, initialValue, draftId, onCancel, onComplete }: Edit
   async function insertImage(image: File): Promise<void> {
     const field = textarea.current;
     if (!field) return;
-    const start = field.selectionStart;
-    const end = field.selectionEnd;
+    uploadAnchor.current = {
+      range: { start: field.selectionStart, end: field.selectionEnd },
+      revision: interactionRevision.current,
+      affinity: "left",
+    };
     const entryId = uploadEntryId.current
-      ?? (await api.saveDraft(value)).id;
+      ?? (await api.saveDraft(latestValue.current)).id;
     uploadEntryId.current = entryId;
-    const uploaded = await api.uploadImage(entryId, image);
-    const markdown = `![${uploaded.alt}](${uploaded.markdownUrl})`;
-    const cursor = start + markdown.length;
-    setValue((current) => ({
-      ...current,
-      markdown: insertAtSelection(current.markdown, start, end, markdown).value,
-    }));
-    window.requestAnimationFrame(() => {
-      textarea.current?.focus();
-      textarea.current?.setSelectionRange(cursor, cursor);
-    });
+    try {
+      const uploaded = await api.uploadImage(entryId, image);
+      const tracked = uploadAnchor.current;
+      if (!tracked) return;
+      const markdown = `![${uploaded.alt}](${uploaded.markdownUrl})`;
+      const fieldAtCompletion = textarea.current;
+      const userInteracted = interactionRevision.current !== tracked.revision;
+      const wasFocused = document.activeElement === fieldAtCompletion;
+      const userSelection = fieldAtCompletion
+        ? { start: fieldAtCompletion.selectionStart, end: fieldAtCompletion.selectionEnd }
+        : null;
+      const insertion = insertAtSelection(
+        latestValue.current.markdown,
+        tracked.range.start,
+        tracked.range.end,
+        markdown,
+      );
+      const nextValue = { ...latestValue.current, markdown: insertion.value };
+      latestValue.current = nextValue;
+      setValue(nextValue);
+      uploadAnchor.current = null;
+
+      window.requestAnimationFrame(() => {
+        const currentField = textarea.current;
+        if (!currentField) return;
+        if (!userInteracted) {
+          currentField.focus();
+          currentField.setSelectionRange(insertion.cursor, insertion.cursor);
+        } else if (wasFocused && userSelection) {
+          const selection = transformSelectionAfterReplacement(
+            userSelection,
+            tracked.range,
+            markdown.length,
+          );
+          currentField.setSelectionRange(selection.start, selection.end);
+        }
+      });
+    } finally {
+      uploadAnchor.current = null;
+    }
+  }
+
+  function selectImage(image: File): Promise<void> {
+    let operation!: Promise<void>;
+    operation = (async () => {
+      setUploading(true);
+      try {
+        await insertImage(image);
+      } finally {
+        if (pendingUpload.current === operation) {
+          pendingUpload.current = null;
+          setUploading(false);
+        }
+      }
+    })();
+    pendingUpload.current = operation;
+    return operation;
+  }
+
+  function changeTitle(title: string): void {
+    const nextValue = { ...latestValue.current, title };
+    latestValue.current = nextValue;
+    setValue(nextValue);
+  }
+
+  function changeMarkdown(markdown: string): void {
+    const current = latestValue.current;
+    if (uploadAnchor.current) {
+      const inputRange = pendingInputRange.current;
+      const replacementLength = inputRange
+        ? markdown.length - (current.markdown.length - (inputRange.end - inputRange.start))
+        : -1;
+      const currentAnchor = uploadAnchor.current;
+      const overlapsAnchor = inputRange
+        ? inputRange.start === inputRange.end
+          ? currentAnchor.range.start < inputRange.start
+            && inputRange.start < currentAnchor.range.end
+          : inputRange.start < currentAnchor.range.end
+            && inputRange.end > currentAnchor.range.start
+        : false;
+      uploadAnchor.current = {
+        ...currentAnchor,
+        affinity: overlapsAnchor ? "right" : currentAnchor.affinity,
+        range: inputRange && replacementLength >= 0
+          ? transformUploadAnchorAfterReplacement(
+              currentAnchor.range,
+              inputRange,
+              replacementLength,
+              currentAnchor.affinity,
+            )
+          : transformUploadAnchor(currentAnchor.range, current.markdown, markdown),
+      };
+    }
+    pendingInputRange.current = null;
+    interactionRevision.current += 1;
+    const nextValue = { ...current, markdown };
+    latestValue.current = nextValue;
+    setValue(nextValue);
   }
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (!value.title.trim() || !value.markdown.trim()) {
+    if (!latestValue.current.title.trim() || !latestValue.current.markdown.trim()) {
       setError("TITLE AND MARKDOWN BODY ARE REQUIRED");
       return;
     }
@@ -67,9 +173,11 @@ function EditorForm({ entry, initialValue, draftId, onCancel, onComplete }: Edit
     setSubmitting(true);
     setError(undefined);
     try {
+      await pendingUpload.current;
+      const finalValue = latestValue.current;
       const completed = entry
-        ? await api.updateEntry(entry.id, value)
-        : await draftPersistence.finalize(value).then(() => api.publishDraft());
+        ? await api.updateEntry(entry.id, finalValue)
+        : await draftPersistence.finalize(finalValue).then(() => api.publishDraft());
       onComplete(completed);
     } catch {
       if (isDraft) draftPersistence.resume();
@@ -80,19 +188,25 @@ function EditorForm({ entry, initialValue, draftId, onCancel, onComplete }: Edit
 
   return (
     <main className="editor-page">
-      <form className="editor-form" aria-label="Diary editor" onSubmit={(event) => void submit(event)}>
+      <form
+        className="editor-form"
+        aria-label="Diary editor"
+        aria-busy={uploading || submitting}
+        onSubmit={(event) => void submit(event)}
+      >
         <div className="editor-heading">
           <label className="editor-title-field">
             <span>TITLE</span>
             <input
               aria-label="Title"
               autoFocus
+              disabled={submitting}
               value={value.title}
-              onChange={(event) => setValue({ ...value, title: event.target.value })}
+              onChange={(event) => changeTitle(event.target.value)}
             />
           </label>
           <div className="editor-glyphs">
-            {!preview ? <ImageInsert onSelect={insertImage} /> : null}
+            {!preview ? <ImageInsert disabled={submitting} onSelect={selectImage} /> : null}
             <ModeGlyph preview={preview} onToggle={() => setPreview((current) => !current)} />
           </div>
         </div>
@@ -107,8 +221,18 @@ function EditorForm({ entry, initialValue, draftId, onCancel, onComplete }: Edit
             <textarea
               ref={textarea}
               aria-label="Markdown body"
+              disabled={submitting}
               value={value.markdown}
-              onChange={(event) => setValue({ ...value, markdown: event.target.value })}
+              onBeforeInput={(event) => {
+                pendingInputRange.current = {
+                  start: event.currentTarget.selectionStart,
+                  end: event.currentTarget.selectionEnd,
+                };
+              }}
+              onChange={(event) => changeMarkdown(event.target.value)}
+              onSelect={() => {
+                interactionRevision.current += 1;
+              }}
             />
           </label>
         )}

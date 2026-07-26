@@ -1,10 +1,11 @@
 import { type ChangeEvent, useRef, useState } from "react";
 
 type ImageInsertProps = {
+  disabled?: boolean;
   onSelect(image: File): Promise<void>;
 };
 
-export function ImageInsert({ onSelect }: ImageInsertProps) {
+export function ImageInsert({ disabled = false, onSelect }: ImageInsertProps) {
   const input = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(false);
@@ -28,17 +29,17 @@ export function ImageInsert({ onSelect }: ImageInsertProps) {
     <div className="image-insert">
       <input
         ref={input}
-        className="image-input"
+        hidden
         type="file"
         accept="image/avif,image/gif,image/jpeg,image/png,image/tiff,image/webp"
-        tabIndex={-1}
         onChange={(event) => void selectImage(event)}
       />
       <button
         className="image-glyph"
         type="button"
         aria-label="Insert image"
-        disabled={uploading}
+        aria-busy={uploading}
+        disabled={disabled || uploading}
         onClick={() => input.current?.click()}
       >
         <span className="image-glyph-frame" aria-hidden="true">
