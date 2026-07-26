@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { mkdir, readFile, readdir } from "node:fs/promises";
+import { mkdir, readFile, readdir, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -105,6 +105,56 @@ describe("backup snapshots", () => {
     await snapshots.create("2026-07-26");
 
     expect(await readdir(temporary)).toEqual(["keep.txt"]);
+  });
+
+  it("preserves an unmarked UUID temporary directory even when it contains snapshot.sqlite", async () => {
+    const { backupRoot, snapshots } = fixture();
+    const run = path.join(backupRoot, ".tmp", "22222222-2222-4222-8222-222222222222");
+    await mkdir(run, { recursive: true });
+    writeFileSync(path.join(run, "snapshot.sqlite"), "unrelated");
+
+    await snapshots.create("2026-07-26");
+
+    expect(await readFile(path.join(run, "snapshot.sqlite"), "utf8")).toBe("unrelated");
+  });
+
+  it("does not delete an ownership-changed stale lease while claiming it", async () => {
+    const { backupRoot, dataRoot, database } = fixture();
+    const locks = path.join(backupRoot, ".locks");
+    const lock = path.join(locks, "snapshot-create.lock");
+    await mkdir(lock, { recursive: true });
+    const owner = path.join(lock, "owner.json");
+    writeFileSync(owner, JSON.stringify({ token: "old", pid: 1, createdAt: "2026-01-01T00:00:00.000Z" }));
+    await utimes(lock, new Date("2026-01-01T00:00:00.000Z"), new Date("2026-01-01T00:00:00.000Z"));
+    const currentOwner = JSON.stringify({ token: "new", pid: 2, createdAt: "2026-07-26T00:00:00.000Z" });
+    const snapshots = new SnapshotService({
+      dataRoot,
+      backupRoot,
+      database,
+      beforeLeaseStealClaim: async () => {
+        writeFileSync(owner, currentOwner);
+        await utimes(lock, new Date(), new Date());
+      },
+    });
+
+    await snapshots.create("2026-07-26");
+
+    const quarantines = (await readdir(locks)).filter((name) => name.startsWith("snapshot-create.lock.steal-"));
+    expect(quarantines).toHaveLength(1);
+    expect(await readFile(path.join(locks, quarantines[0]!, "owner.json"), "utf8")).toBe(currentOwner);
+  });
+
+  it("aborts before manifest publication when the owned lease heartbeat fails", async () => {
+    const { dataRoot, backupRoot, database } = fixture();
+    const snapshots = new SnapshotService({
+      dataRoot,
+      backupRoot,
+      database,
+      leaseHeartbeat: async () => { throw new Error("heartbeat failed"); },
+    });
+
+    await expect(snapshots.create("2026-07-26")).rejects.toThrow("BACKUP_LEASE_LOST");
+    expect(await snapshots.list()).toEqual([]);
   });
 
   it("rejects corrupt objects and never publishes a partial restore", async () => {

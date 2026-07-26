@@ -11,6 +11,8 @@ const INTERRUPTED_MANIFEST = /^[0-9a-f-]{36}\.json\.[0-9a-f-]{36}\.tmp$/;
 const INTERRUPTED_MEDIA = /^[a-f0-9]{64}\.[a-z0-9]+\.[0-9a-f-]{36}\.tmp$/;
 const TEMPORARY_DATABASE = /^[0-9a-f-]{36}\.sqlite$/;
 const TEMPORARY_RUN = /^[0-9a-f-]{36}$/;
+const RUN_MARKER = "run.json";
+const RUN_FORMAT = "local-diary-backup-run";
 const SNAPSHOT_LOCK_WAIT_MS = 25;
 const SNAPSHOT_LOCK_TIMEOUT_MS = 30_000;
 const SNAPSHOT_LOCK_STALE_MS = 10 * 60_000;
@@ -21,6 +23,18 @@ export type SnapshotServiceOptions = {
   dataRoot: string;
   backupRoot: string;
   database: DiaryDatabase;
+  leaseHeartbeat?: (path: string) => Promise<void>;
+  beforeLeaseStealClaim?: () => Promise<void>;
+  now?: () => Date;
+};
+
+type SnapshotLease = {
+  lock: string;
+  owner: string;
+  token: string;
+  lost: Error | null;
+  heartbeat: ReturnType<typeof setInterval>;
+  runMarkers: Set<string>;
 };
 
 export class SnapshotService {
@@ -29,6 +43,9 @@ export class SnapshotService {
   private readonly backupRoot: string;
   private readonly manifestsRoot: string;
   private readonly database: DiaryDatabase;
+  private readonly heartbeatLeasePath: (path: string) => Promise<void>;
+  private readonly beforeLeaseStealClaim: (() => Promise<void>) | undefined;
+  private readonly now: () => Date;
   readonly objects: BackupObjectStore;
 
   constructor(options: SnapshotServiceOptions) {
@@ -36,6 +53,12 @@ export class SnapshotService {
     this.backupRoot = resolve(options.backupRoot);
     this.manifestsRoot = join(this.backupRoot, "manifests");
     this.database = options.database;
+    this.now = options.now ?? (() => new Date());
+    this.heartbeatLeasePath = options.leaseHeartbeat ?? (async (pathname) => {
+      const now = this.now();
+      await utimes(pathname, now, now);
+    });
+    this.beforeLeaseStealClaim = options.beforeLeaseStealClaim;
     this.objects = new BackupObjectStore(this.backupRoot);
   }
 
@@ -45,14 +68,15 @@ export class SnapshotService {
 
   async ensure(day: string): Promise<{ snapshot: SnapshotInfo; created: boolean }> {
     if (!DAY.test(day)) throw new Error("Invalid Beijing backup day");
-    return this.withLock(async () => {
+    return this.withLock(async (lease) => {
       await this.cleanupInterruptedArtifacts();
       await this.collectUnreferencedObjects();
       const current = await this.findByDay(day);
       if (current) return { snapshot: asInfo(current), created: false };
 
-      const databaseObject = await this.backupDatabase();
+      const databaseObject = await this.backupDatabase(lease);
       const mediaObjects = await this.inventoryMedia();
+      await this.refreshLease(lease);
       const manifest = snapshotManifestSchema.parse({
         format: "local-diary-snapshot",
         version: 1,
@@ -64,6 +88,7 @@ export class SnapshotService {
       });
 
       await this.writeManifest(manifest);
+      await this.refreshLease(lease);
       await this.prune();
       return { snapshot: asInfo(manifest), created: true };
     });
@@ -133,16 +158,21 @@ export class SnapshotService {
     `).run(day, new Date().toISOString());
   }
 
-  private async backupDatabase(): Promise<string> {
+  private async backupDatabase(lease: SnapshotLease): Promise<string> {
     const temporaryRoot = join(this.backupRoot, ".tmp");
     await mkdir(temporaryRoot, { recursive: true });
     const runRoot = join(temporaryRoot, randomUUID());
     await mkdir(runRoot);
     const destination = join(runRoot, "snapshot.sqlite");
+    const marker = join(runRoot, RUN_MARKER);
+    await this.writeRunMarker(marker, lease);
+    lease.runMarkers.add(marker);
     try {
       await this.database.backup(destination);
+      await this.refreshLease(lease);
       return await this.objects.put(await readFile(destination));
     } finally {
+      lease.runMarkers.delete(marker);
       await rm(runRoot, { recursive: true, force: true });
     }
   }
@@ -224,11 +254,16 @@ export class SnapshotService {
       }
       if (!stat.isDirectory() || !TEMPORARY_RUN.test(item.name)) continue;
       const children = await readdir(pathname, { withFileTypes: true });
-      const safeRun = children.length === 0 || (children.length === 1
-        && children[0]!.name === "snapshot.sqlite"
-        && children[0]!.isFile()
-        && !children[0]!.isSymbolicLink());
-      if (safeRun) await rm(pathname, { recursive: true, force: true });
+      const marker = children.find((child) => child.name === RUN_MARKER);
+      const allowed = children.every((child) => child.name === RUN_MARKER || child.name === "snapshot.sqlite");
+      if (!marker || !marker.isFile() || marker.isSymbolicLink() || !allowed) continue;
+      const markerPath = join(pathname, RUN_MARKER);
+      const markerStat = await lstat(markerPath);
+      const markerData = await readRunMarker(markerPath);
+      if (!markerData || !isStale(markerData, markerStat.mtimeMs, this.now())) continue;
+      const snapshot = children.find((child) => child.name === "snapshot.sqlite");
+      if (snapshot && (!snapshot.isFile() || snapshot.isSymbolicLink())) continue;
+      await rm(pathname, { recursive: true, force: true });
     }
   }
 
@@ -262,7 +297,7 @@ export class SnapshotService {
     return join(this.manifestsRoot, `${id}.json`);
   }
 
-  private async withLock<T>(work: () => Promise<T>): Promise<T> {
+  private async withLock<T>(work: (lease: SnapshotLease) => Promise<T>): Promise<T> {
     const key = this.backupRoot;
     const previous = SnapshotService.locks.get(key) ?? Promise.resolve();
     let release!: () => void;
@@ -271,11 +306,11 @@ export class SnapshotService {
     SnapshotService.locks.set(key, tail);
     await previous;
     try {
-      const releaseFilesystemLock = await this.acquireFilesystemLock();
+      const lease = await this.acquireFilesystemLock();
       try {
-        return await work();
+        return await work(lease);
       } finally {
-        await releaseFilesystemLock();
+        await this.releaseFilesystemLock(lease);
       }
     } finally {
       release();
@@ -283,7 +318,7 @@ export class SnapshotService {
     }
   }
 
-  private async acquireFilesystemLock(): Promise<() => Promise<void>> {
+  private async acquireFilesystemLock(): Promise<SnapshotLease> {
     const locksRoot = join(this.backupRoot, ".locks");
     await mkdir(locksRoot, { recursive: true });
     const root = await lstat(locksRoot);
@@ -295,25 +330,17 @@ export class SnapshotService {
         await mkdir(lock);
         const token = randomUUID();
         const owner = join(lock, "owner.json");
-        await writeFile(owner, JSON.stringify({ token, pid: process.pid, createdAt: new Date().toISOString() }), { flag: "wx" });
-        const heartbeat = setInterval(() => { void utimes(lock, new Date(), new Date()).catch(() => undefined); }, 60_000);
-        return async () => {
-          clearInterval(heartbeat);
-          const current = await readFile(owner, "utf8").catch((candidate) => isMissing(candidate) ? null : Promise.reject(candidate));
-          if (!current) return;
-          try {
-            if (JSON.parse(current).token === token) await rm(lock, { recursive: true, force: true });
-          } catch {
-            // An unexpected owner file is not ours to remove.
-          }
-        };
+        await writeFile(owner, JSON.stringify({ token, pid: process.pid, createdAt: this.now().toISOString() }), { flag: "wx" });
+        const lease: SnapshotLease = { lock, owner, token, lost: null, heartbeat: undefined!, runMarkers: new Set() };
+        lease.heartbeat = setInterval(() => { void this.refreshLease(lease).catch((error) => { lease.lost = asLeaseLost(error); }); }, 60_000);
+        return lease;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
         const stat = await lstat(lock).catch((candidate) => isMissing(candidate) ? null : Promise.reject(candidate));
         if (!stat) continue;
         if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("BACKUP_UNSAFE_LOCK_PATH");
-        if (Date.now() - stat.mtimeMs > SNAPSHOT_LOCK_STALE_MS && await this.isRemovableStaleLock(lock)) {
-          await rm(lock, { recursive: true, force: true });
+        if (Date.now() - stat.mtimeMs > SNAPSHOT_LOCK_STALE_MS) {
+          await this.tryClaimStaleLock(lock, stat.mtimeMs);
           continue;
         }
         await new Promise<void>((resolve) => setTimeout(resolve, SNAPSHOT_LOCK_WAIT_MS));
@@ -322,12 +349,61 @@ export class SnapshotService {
     throw new Error("BACKUP_LOCK_TIMEOUT");
   }
 
-  private async isRemovableStaleLock(lock: string): Promise<boolean> {
-    const children = await readdir(lock, { withFileTypes: true });
-    return children.length === 1
-      && children[0]!.name === "owner.json"
-      && children[0]!.isFile()
-      && !children[0]!.isSymbolicLink();
+  private async releaseFilesystemLock(lease: SnapshotLease): Promise<void> {
+    clearInterval(lease.heartbeat);
+    const current = await readLeaseOwner(lease.owner);
+    if (current?.token === lease.token) await rm(lease.lock, { recursive: true, force: true });
+  }
+
+  private async tryClaimStaleLock(lock: string, observedMtimeMs: number): Promise<void> {
+    const capturedOwner = await readLeaseOwner(join(lock, "owner.json"));
+    if (!capturedOwner?.token) return;
+    await this.beforeLeaseStealClaim?.();
+    const quarantine = `${lock}.steal-${randomUUID()}`;
+    try {
+      await rename(lock, quarantine);
+    } catch (error) {
+      if (isMissing(error) || (error as NodeJS.ErrnoException).code === "EEXIST") return;
+      throw error;
+    }
+    const claimedStat = await lstat(quarantine).catch((error) => isMissing(error) ? null : Promise.reject(error));
+    const claimedOwner = await readLeaseOwner(join(quarantine, "owner.json"));
+    if (claimedStat && claimedStat.mtimeMs === observedMtimeMs && claimedOwner?.token === capturedOwner.token) {
+      await rm(quarantine, { recursive: true, force: true });
+    }
+  }
+
+  private async refreshLease(lease: SnapshotLease): Promise<void> {
+    if (lease.lost) throw lease.lost;
+    const owner = await readLeaseOwner(lease.owner);
+    if (owner?.token !== lease.token) {
+      lease.lost = new Error("BACKUP_LEASE_LOST");
+      throw lease.lost;
+    }
+    try {
+      await this.heartbeatLeasePath(lease.lock);
+      for (const marker of lease.runMarkers) {
+        const now = this.now();
+        await utimes(marker, now, now);
+      }
+    } catch (error) {
+      lease.lost = asLeaseLost(error);
+      throw lease.lost;
+    }
+  }
+
+  private async writeRunMarker(marker: string, lease: SnapshotLease): Promise<void> {
+    const now = this.now().toISOString();
+    const temporary = `${marker}.${randomUUID()}.tmp`;
+    await writeFile(temporary, JSON.stringify({
+      format: RUN_FORMAT,
+      version: 1,
+      token: lease.token,
+      pid: process.pid,
+      startedAt: now,
+      heartbeatAt: now,
+    }), { flag: "wx" });
+    await rename(temporary, marker);
   }
 }
 
@@ -375,4 +451,38 @@ function safeMediaDestination(staging: string, logicalPath: string, expectedHash
 
 function isMissing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+async function readLeaseOwner(pathname: string): Promise<{ token: string } | null> {
+  const stat = await lstat(pathname).catch((error) => isMissing(error) ? null : Promise.reject(error));
+  if (!stat || !stat.isFile() || stat.isSymbolicLink()) return null;
+  try {
+    const parsed = JSON.parse(await readFile(pathname, "utf8")) as { token?: unknown };
+    return typeof parsed.token === "string" && parsed.token.length > 0 ? { token: parsed.token } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readRunMarker(pathname: string): Promise<{ token: string; startedAt: string; heartbeatAt: string } | null> {
+  try {
+    const parsed = JSON.parse(await readFile(pathname, "utf8")) as Record<string, unknown>;
+    if (parsed.format !== RUN_FORMAT || parsed.version !== 1 || typeof parsed.token !== "string" || typeof parsed.pid !== "number"
+      || typeof parsed.startedAt !== "string" || typeof parsed.heartbeatAt !== "string") return null;
+    if (Number.isNaN(Date.parse(parsed.startedAt)) || Number.isNaN(Date.parse(parsed.heartbeatAt))) return null;
+    return { token: parsed.token, startedAt: parsed.startedAt, heartbeatAt: parsed.heartbeatAt };
+  } catch {
+    return null;
+  }
+}
+
+function isStale(marker: { heartbeatAt: string }, markerMtimeMs: number, now: Date): boolean {
+  return Date.parse(marker.heartbeatAt) <= now.getTime() - SNAPSHOT_LOCK_STALE_MS
+    && markerMtimeMs <= now.getTime() - SNAPSHOT_LOCK_STALE_MS;
+}
+
+function asLeaseLost(error: unknown): Error {
+  return error instanceof Error && error.message === "BACKUP_LEASE_LOST"
+    ? error
+    : new Error("BACKUP_LEASE_LOST", { cause: error });
 }
