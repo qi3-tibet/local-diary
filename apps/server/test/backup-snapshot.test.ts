@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { readFile, readdir } from "node:fs/promises";
+import { mkdir, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -78,22 +78,33 @@ describe("backup snapshots", () => {
     expect(await objects.count()).toBe(31);
   });
 
-  it("replaces a same-day snapshot safely and serializes concurrent create calls", async () => {
-    const { dataRoot, snapshots } = fixture();
-    writeFileSync(path.join(dataRoot, "before.txt"), "before");
-    const initial = await snapshots.create("2026-07-26");
-    writeFileSync(path.join(dataRoot, "after.txt"), "after");
-
+  it("creates one idempotent same-day snapshot across concurrent service instances", async () => {
+    const { dataRoot, backupRoot, database, snapshots } = fixture();
+    const secondService = new SnapshotService({ dataRoot, backupRoot, database });
     const [left, right] = await Promise.all([
       snapshots.create("2026-07-26"),
-      snapshots.create("2026-07-26"),
+      secondService.create("2026-07-26"),
     ]);
+    const later = await snapshots.create("2026-07-26");
     const retained = await snapshots.list();
 
-    expect(initial.id).not.toBe(left.id);
     expect(left.id).toBe(right.id);
+    expect(later.id).toBe(left.id);
     expect(retained).toHaveLength(1);
     expect(retained[0]?.id).toBe(left.id);
+  });
+
+  it("cleans only recognized interrupted backup database artifacts before a new run", async () => {
+    const { backupRoot, snapshots } = fixture();
+    const temporary = path.join(backupRoot, ".tmp");
+    await mkdir(temporary, { recursive: true });
+    const abandoned = path.join(temporary, "11111111-1111-4111-8111-111111111111.sqlite");
+    writeFileSync(abandoned, "abandoned");
+    writeFileSync(path.join(temporary, "keep.txt"), "keep");
+
+    await snapshots.create("2026-07-26");
+
+    expect(await readdir(temporary)).toEqual(["keep.txt"]);
   });
 
   it("rejects corrupt objects and never publishes a partial restore", async () => {
@@ -142,5 +153,17 @@ describe("backup snapshots", () => {
 
     expect(await runDailyBackupIfDue({ snapshots, clock })).toMatchObject({ created: true, day: "2026-07-26" });
     expect(await runDailyBackupIfDue({ snapshots, clock })).toMatchObject({ created: false, day: "2026-07-26" });
+  });
+
+  it("does not move the scheduler state backward when the Beijing clock rolls back", async () => {
+    const { snapshots } = fixture();
+    let timestamp = "2026-07-27T09:00:00+08:00";
+    const clock = { publishedAt: () => timestamp, dayKey: (value: string) => value.slice(0, 10) };
+
+    expect(await runDailyBackupIfDue({ snapshots, clock })).toMatchObject({ created: true, day: "2026-07-27" });
+    timestamp = "2026-07-26T09:00:00+08:00";
+    expect(await runDailyBackupIfDue({ snapshots, clock })).toMatchObject({ created: false, day: "2026-07-26" });
+    expect(snapshots.getLastScheduledDay()).toBe("2026-07-27");
+    expect((await snapshots.list()).map((snapshot) => snapshot.day)).toEqual(["2026-07-27"]);
   });
 });

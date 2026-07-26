@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, rename, rm, utimes, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { snapshotManifestSchema, type SnapshotManifest } from "@diary/contracts";
 import type { DiaryDatabase } from "../db/client.js";
@@ -9,6 +9,11 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const MEDIA_FILE = /^[a-f0-9]{64}\.[a-z0-9]+$/;
 const INTERRUPTED_MANIFEST = /^[0-9a-f-]{36}\.json\.[0-9a-f-]{36}\.tmp$/;
 const INTERRUPTED_MEDIA = /^[a-f0-9]{64}\.[a-z0-9]+\.[0-9a-f-]{36}\.tmp$/;
+const TEMPORARY_DATABASE = /^[0-9a-f-]{36}\.sqlite$/;
+const TEMPORARY_RUN = /^[0-9a-f-]{36}$/;
+const SNAPSHOT_LOCK_WAIT_MS = 25;
+const SNAPSHOT_LOCK_TIMEOUT_MS = 30_000;
+const SNAPSHOT_LOCK_STALE_MS = 10 * 60_000;
 
 export type SnapshotInfo = SnapshotManifest & { objects: string[] };
 
@@ -35,13 +40,16 @@ export class SnapshotService {
   }
 
   async create(day: string): Promise<SnapshotInfo> {
+    return (await this.ensure(day)).snapshot;
+  }
+
+  async ensure(day: string): Promise<{ snapshot: SnapshotInfo; created: boolean }> {
     if (!DAY.test(day)) throw new Error("Invalid Beijing backup day");
-    const observed = await this.findByDay(day);
     return this.withLock(async () => {
       await this.cleanupInterruptedArtifacts();
       await this.collectUnreferencedObjects();
       const current = await this.findByDay(day);
-      if (observed && current && current.id !== observed.id) return asInfo(current);
+      if (current) return { snapshot: asInfo(current), created: false };
 
       const databaseObject = await this.backupDatabase();
       const mediaObjects = await this.inventoryMedia();
@@ -56,9 +64,8 @@ export class SnapshotService {
       });
 
       await this.writeManifest(manifest);
-      if (current) await rm(this.manifestPath(current.id), { force: true });
       await this.prune();
-      return asInfo(manifest);
+      return { snapshot: asInfo(manifest), created: true };
     });
   }
 
@@ -129,12 +136,14 @@ export class SnapshotService {
   private async backupDatabase(): Promise<string> {
     const temporaryRoot = join(this.backupRoot, ".tmp");
     await mkdir(temporaryRoot, { recursive: true });
-    const destination = join(temporaryRoot, `${randomUUID()}.sqlite`);
+    const runRoot = join(temporaryRoot, randomUUID());
+    await mkdir(runRoot);
+    const destination = join(runRoot, "snapshot.sqlite");
     try {
       await this.database.backup(destination);
       return await this.objects.put(await readFile(destination));
     } finally {
-      await rm(destination, { force: true });
+      await rm(runRoot, { recursive: true, force: true });
     }
   }
 
@@ -197,6 +206,30 @@ export class SnapshotService {
       }
     }
     await this.objects.cleanupInterruptedObjects();
+    await this.cleanupInterruptedTemporaryDatabases();
+  }
+
+  private async cleanupInterruptedTemporaryDatabases(): Promise<void> {
+    const temporaryRoot = join(this.backupRoot, ".tmp");
+    const root = await lstat(temporaryRoot).catch((error) => isMissing(error) ? null : Promise.reject(error));
+    if (!root) return;
+    if (!root.isDirectory() || root.isSymbolicLink()) throw new Error("BACKUP_UNSAFE_TEMPORARY_PATH");
+    for (const item of await readdir(temporaryRoot, { withFileTypes: true })) {
+      const pathname = join(temporaryRoot, item.name);
+      const stat = await lstat(pathname);
+      if (stat.isSymbolicLink()) continue;
+      if (stat.isFile() && TEMPORARY_DATABASE.test(item.name)) {
+        await rm(pathname, { force: true });
+        continue;
+      }
+      if (!stat.isDirectory() || !TEMPORARY_RUN.test(item.name)) continue;
+      const children = await readdir(pathname, { withFileTypes: true });
+      const safeRun = children.length === 0 || (children.length === 1
+        && children[0]!.name === "snapshot.sqlite"
+        && children[0]!.isFile()
+        && !children[0]!.isSymbolicLink());
+      if (safeRun) await rm(pathname, { recursive: true, force: true });
+    }
   }
 
   private async get(id: string): Promise<SnapshotManifest> {
@@ -238,11 +271,63 @@ export class SnapshotService {
     SnapshotService.locks.set(key, tail);
     await previous;
     try {
-      return await work();
+      const releaseFilesystemLock = await this.acquireFilesystemLock();
+      try {
+        return await work();
+      } finally {
+        await releaseFilesystemLock();
+      }
     } finally {
       release();
       if (SnapshotService.locks.get(key) === tail) SnapshotService.locks.delete(key);
     }
+  }
+
+  private async acquireFilesystemLock(): Promise<() => Promise<void>> {
+    const locksRoot = join(this.backupRoot, ".locks");
+    await mkdir(locksRoot, { recursive: true });
+    const root = await lstat(locksRoot);
+    if (!root.isDirectory() || root.isSymbolicLink()) throw new Error("BACKUP_UNSAFE_LOCK_PATH");
+    const lock = join(locksRoot, "snapshot-create.lock");
+    const deadline = Date.now() + SNAPSHOT_LOCK_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      try {
+        await mkdir(lock);
+        const token = randomUUID();
+        const owner = join(lock, "owner.json");
+        await writeFile(owner, JSON.stringify({ token, pid: process.pid, createdAt: new Date().toISOString() }), { flag: "wx" });
+        const heartbeat = setInterval(() => { void utimes(lock, new Date(), new Date()).catch(() => undefined); }, 60_000);
+        return async () => {
+          clearInterval(heartbeat);
+          const current = await readFile(owner, "utf8").catch((candidate) => isMissing(candidate) ? null : Promise.reject(candidate));
+          if (!current) return;
+          try {
+            if (JSON.parse(current).token === token) await rm(lock, { recursive: true, force: true });
+          } catch {
+            // An unexpected owner file is not ours to remove.
+          }
+        };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        const stat = await lstat(lock).catch((candidate) => isMissing(candidate) ? null : Promise.reject(candidate));
+        if (!stat) continue;
+        if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("BACKUP_UNSAFE_LOCK_PATH");
+        if (Date.now() - stat.mtimeMs > SNAPSHOT_LOCK_STALE_MS && await this.isRemovableStaleLock(lock)) {
+          await rm(lock, { recursive: true, force: true });
+          continue;
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, SNAPSHOT_LOCK_WAIT_MS));
+      }
+    }
+    throw new Error("BACKUP_LOCK_TIMEOUT");
+  }
+
+  private async isRemovableStaleLock(lock: string): Promise<boolean> {
+    const children = await readdir(lock, { withFileTypes: true });
+    return children.length === 1
+      && children[0]!.name === "owner.json"
+      && children[0]!.isFile()
+      && !children[0]!.isSymbolicLink();
   }
 }
 
