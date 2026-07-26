@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
+import { PassThrough } from "node:stream";
 import { randomUUID } from "node:crypto";
 import type { SnapshotService } from "./snapshot.js";
 import { exportArchive } from "./archive.js";
@@ -40,12 +41,15 @@ export function registerBackupRoutes(server: FastifyInstance, options: {
     const root = join(options.temporaryRoot, "restore-uploads");
     await mkdir(root, { recursive: true });
     const archive = join(root, `${randomUUID()}.zip`);
-    const phases: string[] = [];
+    reply.hijack();
+    reply.raw.writeHead(200, { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store" });
+    const events = new PassThrough(); events.pipe(reply.raw);
+    const emit = (value: Record<string, string>) => events.write(`${JSON.stringify(value)}\n`);
     try {
       await pipeline(upload.file, (await import("node:fs")).createWriteStream(archive, { flags: "wx" }));
-      if (upload.file.truncated) return reply.code(413).send({ error: "ARCHIVE_SIZE_LIMIT" });
-      await restoreArchive(archive, { ...context, onProgress: (phase) => phases.push(phase) });
-      return { phases };
-    } finally { await rm(archive, { force: true }); }
+      if (upload.file.truncated) { emit({ error: "ARCHIVE_SIZE_LIMIT" }); return events.end(); }
+      await restoreArchive(archive, { ...context, onProgress: (phase) => emit({ phase }) });
+    } catch (error) { emit({ error: error instanceof Error ? error.message : "RESTORE_FAILED" }); }
+    finally { await rm(archive, { force: true }); events.end(); }
   });
 }

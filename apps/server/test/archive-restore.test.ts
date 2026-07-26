@@ -65,9 +65,28 @@ describe("complete archive restore", () => {
     const archive = join(temp("archive-output-"), "diary.zip");
     await exportArchive(snapshot.id, snapshots, archive);
     const before = await readFile(join(dataRoot, "diary.sqlite"));
-    await expect(restoreArchive(archive, { dataRoot, temporaryRoot: temp("archive-temp-"), quiesce: async () => {} }))
-      .rejects.toThrow("RESTORE_SAFETY_SNAPSHOT_REQUIRED");
+    await expect(restoreArchive(archive, { dataRoot, temporaryRoot: temp("archive-temp-") }))
+      .rejects.toThrow("RESTORE_CONTEXT_REQUIRED");
     expect(await readFile(join(dataRoot, "diary.sqlite"))).toEqual(before);
+  });
+
+  it("holds the write barrier across safety snapshot, swap, and rebuild", async () => {
+    const source = temp("archive-source-");
+    const backupRoot = temp("archive-backup-");
+    const database = createDiaryDatabase(source); databases.push(database);
+    const snapshots = new SnapshotService({ dataRoot: source, backupRoot, database });
+    const snapshot = await snapshots.create("2026-07-26");
+    const archive = join(temp("archive-output-"), "diary.zip"); await exportArchive(snapshot.id, snapshots, archive);
+    const live = temp("archive-live-"); await writeFile(join(live, "diary.sqlite"), "old");
+    const events: string[] = [];
+    await restoreArchive(archive, { dataRoot: live, temporaryRoot: temp("archive-temp-"), coordinator: {
+      acquireBarrier: async () => { events.push("BARRIER"); return () => { events.push("RESUME"); }; },
+      createSafetySnapshot: async () => { events.push("SAFETY"); },
+      quiesce: async () => { events.push("QUIESCE"); },
+      rebuildDerivedData: async () => { events.push("REBUILD"); },
+      reopen: async () => { events.push("REOPEN"); },
+    } });
+    expect(events).toEqual(["BARRIER", "SAFETY", "QUIESCE", "REBUILD", "REOPEN", "RESUME"]);
   });
 
   function temp(prefix: string): string {
