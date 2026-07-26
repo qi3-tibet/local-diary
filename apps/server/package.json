@@ -12,10 +12,14 @@
     "better-sqlite3": "^13.0.1",
     "fastify": "^5.10.0",
     "music-metadata": "^11.14.0",
-    "sharp": "^0.35.3"
+    "sharp": "^0.35.3",
+    "yauzl": "^3.4.0",
+    "yazl": "^3.3.1"
   },
   "devDependencies": {
     "@diary/test-support": "workspace:*",
-    "@types/better-sqlite3": "^7.6.13"
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/yauzl": "^3.4.0",
+    "@types/yazl": "^3.3.1"
   }
 }

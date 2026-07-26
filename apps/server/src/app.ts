@@ -17,6 +17,9 @@ import { MusicRecognitionService } from "./music/recognition/service.js";
 import { createMusicBrainzTextLookup } from "./music/recognition/text-lookup.js";
 import type { FingerprintLookup, TextLookup } from "./music/recognition/types.js";
 import path from "node:path";
+import { SnapshotService } from "./backup/snapshot.js";
+import { registerBackupRoutes } from "./backup/routes.js";
+import type { RestoreContext } from "./backup/restore.js";
 
 export type ServerOptions = {
   dataRoot?: string;
@@ -27,6 +30,8 @@ export type ServerOptions = {
     textLookup?: TextLookup;
     fingerprintLookup?: FingerprintLookup;
   };
+  backupRoot?: string;
+  restoreContext?: () => RestoreContext | null;
 };
 
 export function buildServer(options: ServerOptions = {}) {
@@ -47,6 +52,11 @@ export function buildServer(options: ServerOptions = {}) {
     options.musicRecognition?.textLookup ?? createMusicBrainzTextLookup(),
     options.musicRecognition?.fingerprintLookup ?? createAcoustIdFingerprintLookup(),
   );
+  const snapshots = new SnapshotService({
+    dataRoot,
+    backupRoot: path.resolve(options.backupRoot ?? path.join(dataRoot, "backup")),
+    database,
+  });
 
   server.get("/api/v1/health", async () => ({ status: "ok", apiVersion: 1 }));
   void server.register(multipart);
@@ -55,6 +65,7 @@ export function buildServer(options: ServerOptions = {}) {
   void registerMediaRoutes(server, images);
   void registerMusicRoutes(server, music, recognition, options.musicUploadLimit);
   void registerMusicStreamRoute(server, database, mediaStore);
+  registerBackupRoutes(server, { snapshots, temporaryRoot: path.join(dataRoot, ".temporary"), restoreContext: options.restoreContext });
   server.addHook("onClose", async () => database.close());
 
   return server;
