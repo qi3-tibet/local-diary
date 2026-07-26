@@ -13,12 +13,11 @@ type AudioEventName =
   | "durationchange"
   | "ended"
   | "error"
-  | "pause"
-  | "play"
   | "timeupdate";
 
 export type AudioOwner = {
   src: string;
+  readonly currentSrc?: string;
   currentTime: number;
   duration: number;
   paused: boolean;
@@ -51,6 +50,7 @@ export type PlayerStore = StoreApi<PlayerState>;
 
 export function createPlayerStore(audio: AudioOwner): PlayerStore {
   const listeners = new Map<AudioEventName, () => void>();
+  let activeAttempt = 0;
   const store = createStore<PlayerState>((set, get) => ({
     track: null,
     visible: false,
@@ -60,37 +60,56 @@ export function createPlayerStore(audio: AudioOwner): PlayerStore {
     error: null,
 
     async play(track) {
+      const attempt = ++activeAttempt;
       const switching = get().track?.id !== track.id;
+      removeListeners();
       if (switching) {
         audio.pause();
         audio.src = track.streamUrl;
         audio.currentTime = 0;
+        audio.load();
       }
       set({
         track,
         visible: true,
+        playing: switching ? false : get().playing,
         currentTime: switching ? 0 : audio.currentTime,
         duration: finite(audio.duration),
         error: null,
       });
+      bindListeners(attempt, track);
       try {
         await audio.play();
+        if (isActive(attempt, track)) set({ playing: true, error: null });
       } catch {
-        set({ error: "MEDIA UNAVAILABLE", playing: false, visible: true });
+        if (isActive(attempt, track)) {
+          set({ error: "MEDIA UNAVAILABLE", playing: false, visible: true });
+        }
       }
     },
 
     pause() {
+      const attempt = ++activeAttempt;
+      const current = get().track;
+      removeListeners();
       audio.pause();
       set({ playing: false });
+      if (current) bindListeners(attempt, current);
     },
 
     async resume() {
-      if (!get().track) return;
+      const track = get().track;
+      if (!track) return;
+      const attempt = ++activeAttempt;
+      removeListeners();
+      bindListeners(attempt, track);
       try {
         await audio.play();
+        if (isActive(attempt, track)) set({ playing: true, error: null });
       } catch {
-        set({ error: "MEDIA UNAVAILABLE", playing: false });
+        if (isActive(attempt, track)) {
+          set({ error: "MEDIA UNAVAILABLE", playing: false });
+        }
       }
     },
 
@@ -101,6 +120,8 @@ export function createPlayerStore(audio: AudioOwner): PlayerStore {
     },
 
     stop() {
+      activeAttempt += 1;
+      removeListeners();
       audio.pause();
       audio.removeAttribute("src");
       audio.load();
@@ -113,25 +134,47 @@ export function createPlayerStore(audio: AudioOwner): PlayerStore {
 
     destroy() {
       get().stop();
-      listeners.forEach((listener, name) => audio.removeEventListener(name, listener));
-      listeners.clear();
     },
   }));
 
-  const listen = (name: AudioEventName, listener: () => void) => {
-    listeners.set(name, listener);
-    audio.addEventListener(name, listener);
-  };
-  listen("play", () => store.setState({ playing: true, error: null }));
-  listen("pause", () => store.setState({ playing: false }));
-  listen("timeupdate", () => store.setState({ currentTime: finite(audio.currentTime) }));
-  listen("durationchange", () => store.setState({ duration: finite(audio.duration) }));
-  listen("ended", () => store.setState({ playing: false, currentTime: finite(audio.duration) }));
-  listen("error", () => store.setState({
-    error: "MEDIA UNAVAILABLE",
-    playing: false,
-    visible: true,
-  }));
+  function bindListeners(attempt: number, track: PlayerTrack): void {
+    const listen = (name: AudioEventName, action: () => void) => {
+      const listener = () => {
+        if (isActive(attempt, track)) action();
+      };
+      listeners.set(name, listener);
+      audio.addEventListener(name, listener);
+    };
+    listen("timeupdate", () => store.setState({ currentTime: finite(audio.currentTime) }));
+    listen("durationchange", () => store.setState({ duration: finite(audio.duration) }));
+    listen("ended", () => {
+      activeAttempt += 1;
+      removeListeners();
+      store.setState({ playing: false, currentTime: finite(audio.duration) });
+    });
+    listen("error", () => {
+      activeAttempt += 1;
+      removeListeners();
+      store.setState({
+        error: "MEDIA UNAVAILABLE",
+        playing: false,
+        visible: true,
+      });
+    });
+  }
+
+  function removeListeners(): void {
+    listeners.forEach((listener, name) => audio.removeEventListener(name, listener));
+    listeners.clear();
+  }
+
+  function isActive(attempt: number, track: PlayerTrack): boolean {
+    const activeTrack = store.getState().track;
+    return attempt === activeAttempt
+      && activeTrack?.id === track.id
+      && activeTrack.streamUrl === track.streamUrl
+      && sourceMatches(audio.currentSrc || audio.src, track.streamUrl);
+  }
 
   return store;
 }
@@ -157,4 +200,15 @@ const initialState = {
 
 function finite(value: number): number {
   return Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+function sourceMatches(current: string, expected: string): boolean {
+  if (!current) return false;
+  if (current === expected) return true;
+  const base = typeof document === "undefined" ? "http://diary.local/" : document.baseURI;
+  try {
+    return new URL(current, base).href === new URL(expected, base).href;
+  } catch {
+    return false;
+  }
 }
