@@ -12,10 +12,7 @@ if (!dataRoot) throw new Error("DIARY_DATA_ROOT is required for the E2E server."
 
 const host = process.env.DIARY_HOST ?? "127.0.0.1";
 const port = Number(process.env.DIARY_PORT ?? "4174");
-const database = createDiaryDatabase(dataRoot);
-const mediaStore = new MediaStore(path.join(dataRoot, "media"));
-const entries = new EntryRepository(database, mediaStore);
-const server = buildServer({ dataRoot, database });
+const server = buildServer({ dataRoot, scheduleBackups: false });
 let closing = false;
 
 async function close(): Promise<void> {
@@ -33,38 +30,45 @@ server.post("/__e2e__/shutdown", async (_request, reply) => {
 });
 
 server.post<{ Body: { corrupt?: boolean } }>("/__e2e__/music-fixture", async (request) => {
+  const database = createDiaryDatabase(dataRoot);
+  const mediaStore = new MediaStore(path.join(dataRoot, "media"));
+  const entries = new EntryRepository(database, mediaStore);
   const suffix = request.body?.corrupt ? "corrupt" : crypto.randomUUID();
-  const musicDraft = entries.saveDraft({
-    title: `Music ${suffix}`,
-    markdown: request.body?.corrupt ? "咖啡比往常更苦" : "The player stays with this entry.",
-    tags: [],
-  });
-  const musicEntry = entries.publishDraft(
-    musicDraft.id,
-    request.body?.corrupt ? "2026-07-24T10:00:00+08:00" : "2026-07-26T10:00:00+08:00",
-  );
-  const attached = await new MusicService(database, mediaStore).attach(
-    musicEntry.id,
-    taggedMp3(request.body?.corrupt ? "Broken Song" : "Pink + White"),
-    "fixture.mp3",
-  );
-
-  if (request.body?.corrupt) {
-    await writeFile(attached.originalPath, Buffer.from("not an MP3"));
-  } else {
-    const previousDraft = entries.saveDraft({
-      title: `Previous ${suffix}`,
-      markdown: "The previous day remains in the continuous timeline.",
+  try {
+    const musicDraft = entries.saveDraft({
+      title: `Music ${suffix}`,
+      markdown: request.body?.corrupt ? "咖啡比往常更苦" : "The player stays with this entry.",
       tags: [],
     });
-    entries.publishDraft(previousDraft.id, "2026-07-25T09:00:00+08:00");
-  }
+    const musicEntry = entries.publishDraft(
+      musicDraft.id,
+      request.body?.corrupt ? "2026-07-24T10:00:00+08:00" : "2026-07-26T10:00:00+08:00",
+    );
+    const attached = await new MusicService(database, mediaStore).attach(
+      musicEntry.id,
+      taggedMp3(request.body?.corrupt ? "Broken Song" : "Pink + White"),
+      "fixture.mp3",
+    );
 
-  return {
-    entryId: musicEntry.id,
-    mediaId: attached.mediaId,
-    streamUrl: `/api/v1/music/${attached.mediaId}/stream`,
-  };
+    if (request.body?.corrupt) {
+      await writeFile(attached.originalPath, Buffer.from("not an MP3"));
+    } else {
+      const previousDraft = entries.saveDraft({
+        title: `Previous ${suffix}`,
+        markdown: "The previous day remains in the continuous timeline.",
+        tags: [],
+      });
+      entries.publishDraft(previousDraft.id, "2026-07-25T09:00:00+08:00");
+    }
+
+    return {
+      entryId: musicEntry.id,
+      mediaId: attached.mediaId,
+      streamUrl: `/api/v1/music/${attached.mediaId}/stream`,
+    };
+  } finally {
+    database.close();
+  }
 });
 
 process.once("SIGINT", () => {

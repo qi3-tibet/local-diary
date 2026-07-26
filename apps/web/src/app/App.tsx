@@ -13,8 +13,10 @@ import { createThemeStore } from "../theme/theme-store";
 import { TrashPanel } from "../trash/TrashPanel";
 import { FloatingPlayer } from "../music/FloatingPlayer";
 import { getBrowserPlayerStore } from "../music/player-store";
+import { BackupSettings } from "../settings/BackupSettings";
+import { RestoreProgress, type RestoreState } from "../settings/RestoreProgress";
 
-type View = "diary" | "editor" | "search" | "trash";
+type View = "diary" | "editor" | "search" | "trash" | "settings";
 
 export function App() {
   const [player] = useState(getBrowserPlayerStore);
@@ -22,6 +24,8 @@ export function App() {
   const [view, setView] = useState<View>("diary");
   const [editingEntry, setEditingEntry] = useState<Entry>();
   const [managementError, setManagementError] = useState<string>();
+  const [restoreState, setRestoreState] = useState<RestoreState>();
+  const [backupWarning, setBackupWarning] = useState<string>();
   const checkedDraftRecovery = useRef(false);
   const [themeSession] = useState(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -47,6 +51,10 @@ export function App() {
     [entries],
   );
   const [activeDay, setActiveDay] = useState<string>();
+  const sortedDays = useMemo(() => [...days].sort(), [days]);
+  const restoreLocked = restoreState
+    ? ["SAFETY_BACKUP", "RESTORING", "REBUILDING"].includes(restoreState.phase)
+    : false;
 
   useEffect(() => {
     document.documentElement.dataset.theme = resolvedTheme;
@@ -76,12 +84,14 @@ export function App() {
   }, [draftRecoveryQuery.data, draftRecoveryQuery.isSuccess]);
 
   function showDiary(): void {
+    checkedDraftRecovery.current = true;
     setEditingEntry(undefined);
     setManagementError(undefined);
     setView("diary");
   }
 
   function editEntry(entry: Entry): void {
+    checkedDraftRecovery.current = true;
     setEditingEntry(entry);
     setManagementError(undefined);
     setView("editor");
@@ -120,7 +130,30 @@ export function App() {
       queryClient.invalidateQueries({ queryKey: ["published-entries"] }),
       queryClient.invalidateQueries({ queryKey: ["search"] }),
     ]);
+    checkedDraftRecovery.current = true;
+    setEditingEntry(undefined);
+    setManagementError(undefined);
+    setView((current) => current === "editor" ? "diary" : current);
+  }
+
+  function restoredDiary(): void {
+    void Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["draft"] }),
+      queryClient.invalidateQueries({ queryKey: ["published-entries"] }),
+      queryClient.invalidateQueries({ queryKey: ["search"] }),
+      queryClient.invalidateQueries({ queryKey: ["trash"] }),
+    ]);
     showDiary();
+  }
+
+  function openBackupRecovery(): void {
+    checkedDraftRecovery.current = true;
+    setView("settings");
+    window.requestAnimationFrame(() => {
+      const input = document.querySelector<HTMLInputElement>('[aria-label="Backup folder path"]');
+      input?.focus();
+      input?.select();
+    });
   }
 
   function openSearchResult(entry: Entry): void {
@@ -187,29 +220,59 @@ export function App() {
       />
       <div className="app-main">
         <nav className="workspace-tools" aria-label="Diary tools">
-          <button type="button" aria-label="Diary" onClick={showDiary}>DIARY</button>
+          <button type="button" aria-label="Diary" disabled={restoreLocked} onClick={showDiary}>DIARY</button>
           <button
             type="button"
             aria-label="New entry"
+            disabled={restoreLocked}
             onClick={() => {
+              checkedDraftRecovery.current = true;
               setEditingEntry(undefined);
               setView("editor");
             }}
           >
             NEW ENTRY
           </button>
-          <button type="button" aria-label="Search" onClick={() => setView("search")}>
+          <button type="button" aria-label="Search" disabled={restoreLocked} onClick={() => {
+            checkedDraftRecovery.current = true;
+            setView("search");
+          }}>
             SEARCH
           </button>
-          <button type="button" aria-label="Trash" onClick={() => setView("trash")}>
+          <button type="button" aria-label="Trash" disabled={restoreLocked} onClick={() => {
+            checkedDraftRecovery.current = true;
+            setView("trash");
+          }}>
             TRASH
+          </button>
+          <button type="button" aria-label="Settings" disabled={restoreLocked} onClick={() => {
+            checkedDraftRecovery.current = true;
+            setView("settings");
+          }}>
+            SETTINGS
           </button>
         </nav>
         {managementError ? (
           <p className="workspace-error" role="alert">{managementError}</p>
         ) : null}
-        {content}
+        {backupWarning ? (
+          <aside className="persistent-backup-warning" aria-live="polite">
+            <p role="alert">{backupWarning}</p>
+            <button type="button" onClick={openBackupRecovery}>CHOOSE ANOTHER LOCATION</button>
+          </aside>
+        ) : null}
+        <div hidden={view !== "settings"}>
+          <BackupSettings
+            fromDay={sortedDays[0]}
+            toDay={sortedDays.at(-1)}
+            onRestoreState={setRestoreState}
+            onRestored={restoredDiary}
+            onWarning={setBackupWarning}
+          />
+        </div>
+        {view === "settings" ? null : content}
       </div>
+      {restoreState ? <RestoreProgress state={restoreState} /> : null}
       <FloatingPlayer player={player} />
     </div>
   );

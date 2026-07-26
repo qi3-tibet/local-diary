@@ -31,7 +31,6 @@ export async function restoreArchive(archivePath: string, context: RestoreContex
     await writeFile(join(staging, ".local-diary-restore-owner"), "1\n", { flag: "wx" });
     context.onProgress?.("VALIDATING");
     const extracted = await extractAndValidateArchive(archivePath, staging);
-    context.onProgress?.("RESTORING");
     await materialize(next, extracted.manifest, extracted.objectsRoot);
     preflightDatabase(join(next, "diary.sqlite"));
     await withRestoreLock(dataRoot, async () => {
@@ -49,6 +48,7 @@ export async function restoreArchive(archivePath: string, context: RestoreContex
           const safetySnapshotId = await context.coordinator!.createSafetySnapshot();
           if (safetySnapshotId) context.onSafetySnapshot?.(safetySnapshotId);
         }
+        context.onProgress?.("RESTORING");
         await context.coordinator?.quiesce();
         quiesced = Boolean(context.coordinator);
         const root = await lstat(dataRoot).catch(missing);

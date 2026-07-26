@@ -21,6 +21,9 @@ import { SnapshotService } from "./backup/snapshot.js";
 import { registerBackupRoutes } from "./backup/routes.js";
 import type { RestoreContext } from "./backup/restore.js";
 import { registerMarkdownExportRoutes } from "./export/routes.js";
+import { BackupSettingsRepository } from "./settings/repository.js";
+import { registerSettingsRoutes } from "./settings/routes.js";
+import { runDailyBackupIfDue } from "./backup/scheduler.js";
 
 export type ServerOptions = {
   dataRoot?: string;
@@ -32,6 +35,8 @@ export type ServerOptions = {
     fingerprintLookup?: FingerprintLookup;
   };
   backupRoot?: string;
+  settingsPath?: string;
+  scheduleBackups?: boolean;
   restoreContext?: () => RestoreContext | null;
 };
 
@@ -39,7 +44,13 @@ export function buildServer(options: ServerOptions = {}) {
   const server = Fastify({ logger: false });
   const dataRoot = path.resolve(options.dataRoot ?? "data");
   const clock = options.clock ?? createBeijingClock();
-  const backupRoot = path.resolve(options.backupRoot ?? `${dataRoot}.backups`);
+  const defaultBackupRoot = path.resolve(options.backupRoot ?? `${dataRoot}.backups`);
+  const settings = new BackupSettingsRepository({
+    dataRoot,
+    settingsPath: options.settingsPath ?? `${dataRoot}.settings/backup.json`,
+    defaultBackupRoot,
+  });
+  let backupRoot = settings.currentBackupRoot();
   const restoreTemporaryRoot = `${dataRoot}.restore-tmp`;
   let database = options.database ?? createDiaryDatabase(dataRoot);
   let mediaStore = new MediaStore(path.join(dataRoot, "media"));
@@ -72,7 +83,38 @@ export function buildServer(options: ServerOptions = {}) {
     mediaStore: () => mediaStore,
     temporaryRoot: restoreTemporaryRoot,
   });
-  server.addHook("onClose", async () => database.close());
+  registerSettingsRoutes(server, {
+    repository: settings,
+    snapshots: () => snapshots,
+    day: () => clock.dayKey(clock.publishedAt()),
+    onBackupRootChanged: async (nextRoot) => {
+      if (backupRoot === nextRoot) return;
+      backupRoot = nextRoot;
+      snapshots = new SnapshotService({ dataRoot, backupRoot, database });
+      await runDailyBackupIfDue({ snapshots, clock });
+    },
+  });
+  let dailyTimer: ReturnType<typeof setInterval> | undefined;
+  server.addHook("onReady", async () => {
+    const current = await settings.get();
+    if (current.writable) {
+      backupRoot = current.backupRoot;
+      snapshots = new SnapshotService({ dataRoot, backupRoot, database });
+      if (options.scheduleBackups ?? (process.env.NODE_ENV !== "test" && !options.database)) {
+        await runDailyBackupIfDue({ snapshots, clock });
+      }
+    }
+    if (options.scheduleBackups ?? (process.env.NODE_ENV !== "test" && !options.database)) {
+      dailyTimer = setInterval(() => {
+        void runDailyBackupIfDue({ snapshots, clock });
+      }, 60 * 60 * 1000);
+      dailyTimer.unref();
+    }
+  });
+  server.addHook("onClose", async () => {
+    if (dailyTimer) clearInterval(dailyTimer);
+    database.close();
+  });
 
   return server;
 }

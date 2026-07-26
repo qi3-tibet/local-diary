@@ -19,7 +19,10 @@ const ZIP_EPOCH = new Date("1980-01-01T00:00:00.000Z");
 export type ExtractedArchive = { manifest: SnapshotManifest; objectsRoot: string };
 
 export async function exportArchive(snapshotId: string, snapshots: SnapshotService, output: string): Promise<void> {
-  const manifest = (await snapshots.list()).find((snapshot) => snapshot.id === snapshotId);
+  const manifest = [
+    ...await snapshots.list(),
+    ...await snapshots.listSafety(),
+  ].find((snapshot) => snapshot.id === snapshotId);
   if (!manifest) throw new Error("BACKUP_SNAPSHOT_NOT_FOUND");
   const target = resolve(output);
   if (await lstat(target).catch(missing)) throw new Error("ARCHIVE_OUTPUT_EXISTS");

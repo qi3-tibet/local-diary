@@ -10,6 +10,11 @@ import { exportArchive } from "./archive.js";
 import { restoreArchive, type RestoreContext } from "./restore.js";
 
 const ARCHIVE_UPLOAD_LIMIT = 2 * 1024 * 1024 * 1024;
+const ZIP_MIME_TYPES = new Set([
+  "application/zip",
+  "application/x-zip-compressed",
+  "application/octet-stream",
+]);
 
 export function registerBackupRoutes(server: FastifyInstance, options: {
   snapshots: () => SnapshotService;
@@ -37,7 +42,13 @@ export function registerBackupRoutes(server: FastifyInstance, options: {
     const context = options.restoreContext?.();
     if (!context) return reply.code(409).send({ error: "RESTORE_CONTEXT_REQUIRED" });
     const upload = await request.file({ limits: { files: 1, fileSize: ARCHIVE_UPLOAD_LIMIT } });
-    if (!upload || upload.mimetype !== "application/zip") return reply.code(400).send({ error: "ARCHIVE_REQUIRED" });
+    if (
+      !upload
+      || !upload.filename.toLowerCase().endsWith(".zip")
+      || !ZIP_MIME_TYPES.has(upload.mimetype.toLowerCase())
+    ) {
+      return reply.code(400).send({ error: "ARCHIVE_REQUIRED" });
+    }
     const root = join(options.temporaryRoot, "restore-uploads");
     await mkdir(root, { recursive: true });
     const archive = join(root, `${randomUUID()}.zip`);
@@ -47,9 +58,17 @@ export function registerBackupRoutes(server: FastifyInstance, options: {
     const emit = (value: Record<string, string>) => events.write(`${JSON.stringify(value)}\n`);
     try {
       await pipeline(upload.file, (await import("node:fs")).createWriteStream(archive, { flags: "wx" }));
-      if (upload.file.truncated) { emit({ error: "ARCHIVE_SIZE_LIMIT" }); return events.end(); }
+      if (upload.file.truncated) {
+        emit({ phase: "FAILED", error: "ARCHIVE_SIZE_LIMIT" });
+        return events.end();
+      }
       await restoreArchive(archive, { ...context, onProgress: (phase) => emit({ phase }) });
-    } catch (error) { emit({ error: error instanceof Error ? error.message : "RESTORE_FAILED" }); }
+    } catch (error) {
+      emit({
+        phase: "FAILED",
+        error: error instanceof Error ? error.message : "RESTORE_FAILED",
+      });
+    }
     finally { await rm(archive, { force: true }); events.end(); }
   });
 }

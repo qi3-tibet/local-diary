@@ -21,6 +21,26 @@ export type EditableMusic = MusicMetadata & {
   selectedCandidateId?: string | null;
 };
 
+export type BackupSettingsRecord = {
+  backupRoot: string;
+  writable: boolean;
+  existingBackups: "left-in-previous-location";
+  selectionMode: "server-path";
+};
+
+export type RestorePhase =
+  | "VALIDATING"
+  | "SAFETY_BACKUP"
+  | "RESTORING"
+  | "REBUILDING"
+  | "DONE"
+  | "FAILED";
+
+export type RestoreEvent = {
+  phase: RestorePhase;
+  error?: string;
+};
+
 export function createApiClient(request: Request = fetch) {
   async function entryRequest(
     path: string,
@@ -176,6 +196,83 @@ export function createApiClient(request: Request = fetch) {
     mediaDisplayUrl(mediaId: string): string {
       return `/api/v1/media/${encodeURIComponent(mediaId)}/display`;
     },
+
+    async getBackupSettings(): Promise<BackupSettingsRecord> {
+      const response = await request("/api/v1/settings/backup", {
+        headers: { accept: "application/json" },
+      });
+      if (!response.ok) throw new Error(`Could not load backup settings (${response.status}).`);
+      return (await response.json()) as BackupSettingsRecord;
+    },
+
+    async setBackupLocation(backupRoot: string): Promise<BackupSettingsRecord> {
+      const response = await request("/api/v1/settings/backup", {
+        method: "PUT",
+        headers: { accept: "application/json", "content-type": "application/json" },
+        body: JSON.stringify({ backupRoot }),
+      });
+      if (!response.ok) {
+        const failure = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(failure?.error ?? `Could not save backup settings (${response.status}).`);
+      }
+      return (await response.json()) as BackupSettingsRecord;
+    },
+
+    async createBackupSnapshot(): Promise<{ snapshotId: string; archiveUrl: string }> {
+      const response = await request("/api/v1/backups/snapshot", {
+        method: "POST",
+        headers: { accept: "application/json" },
+      });
+      if (!response.ok) throw new Error(`Could not create the backup (${response.status}).`);
+      return (await response.json()) as { snapshotId: string; archiveUrl: string };
+    },
+
+    async restoreBackup(
+      archive: File,
+      onEvent: (event: RestoreEvent) => void,
+      signal?: AbortSignal,
+    ): Promise<void> {
+      const form = new FormData();
+      form.append("archive", archive);
+      const response = await request("/api/v1/backups/restore", {
+        method: "POST",
+        headers: { accept: "application/x-ndjson" },
+        body: form,
+        signal,
+      });
+      if (!response.ok || !response.body) {
+        throw new Error(`Could not restore the archive (${response.status}).`);
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let pending = "";
+      let completed = false;
+      while (true) {
+        const { value, done } = await reader.read();
+        pending += decoder.decode(value, { stream: !done });
+        const lines = pending.split("\n");
+        pending = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const event = parseRestoreEvent(line);
+          onEvent(event);
+          if (event.phase === "FAILED") throw new Error(event.error ?? "RESTORE_FAILED");
+          if (event.phase === "DONE") completed = true;
+        }
+        if (done) break;
+      }
+      if (pending.trim()) {
+        const event = parseRestoreEvent(pending);
+        onEvent(event);
+        if (event.phase === "FAILED") throw new Error(event.error ?? "RESTORE_FAILED");
+        if (event.phase === "DONE") completed = true;
+      }
+      if (!completed) throw new Error("RESTORE_STREAM_INCOMPLETE");
+    },
+
+    markdownExportUrl(from: string, to: string): string {
+      return `/api/v1/exports/markdown?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+    },
   };
 
   async function musicRequest(
@@ -187,6 +284,32 @@ export function createApiClient(request: Request = fetch) {
     if (!response.ok) throw new Error(`${message} (${response.status}).`);
     return (await response.json()) as EditableMusic;
   }
+}
+
+function parseRestoreEvent(line: string): RestoreEvent {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    throw new Error("RESTORE_STREAM_INVALID");
+  }
+  if (!parsed || typeof parsed !== "object") throw new Error("RESTORE_STREAM_INVALID");
+  const value = parsed as { phase?: unknown; error?: unknown };
+  const phases: RestorePhase[] = [
+    "VALIDATING",
+    "SAFETY_BACKUP",
+    "RESTORING",
+    "REBUILDING",
+    "DONE",
+    "FAILED",
+  ];
+  if (typeof value.phase !== "string" || !phases.includes(value.phase as RestorePhase)) {
+    throw new Error("RESTORE_STREAM_INVALID");
+  }
+  return {
+    phase: value.phase as RestorePhase,
+    ...(typeof value.error === "string" ? { error: value.error } : {}),
+  };
 }
 
 export const api = createApiClient();

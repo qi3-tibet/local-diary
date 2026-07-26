@@ -177,4 +177,71 @@ describe("diary API client", () => {
       },
     ]);
   });
+
+  it("loads and changes a verified server-local backup location", async () => {
+    const settings = {
+      backupRoot: "C:\\Diary Backups",
+      writable: true,
+      existingBackups: "left-in-previous-location",
+      selectionMode: "server-path",
+    };
+    const request = vi
+      .fn<RequestFn>()
+      .mockResolvedValueOnce(new Response(JSON.stringify(settings), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(settings), { status: 200 }));
+    const client = createApiClient(request);
+
+    await expect(client.getBackupSettings()).resolves.toEqual(settings);
+    await expect(client.setBackupLocation("C:\\Diary Backups")).resolves.toEqual(settings);
+    expect(request.mock.calls[1]).toEqual([
+      "/api/v1/settings/backup",
+      {
+        method: "PUT",
+        headers: { accept: "application/json", "content-type": "application/json" },
+        body: JSON.stringify({ backupRoot: "C:\\Diary Backups" }),
+      },
+    ]);
+  });
+
+  it("parses restore NDJSON incrementally and keeps the real phase order", async () => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('{"phase":"VALIDATING"}\n{"phase":"SAFETY_'));
+        controller.enqueue(encoder.encode('BACKUP"}\n{"phase":"RESTORING"}\n{"phase":"REBUILDING"}\n'));
+        controller.enqueue(encoder.encode('{"phase":"DONE"}\n'));
+        controller.close();
+      },
+    });
+    const request = vi.fn<RequestFn>(async () => new Response(body, { status: 200 }));
+    const client = createApiClient(request);
+    const phases: string[] = [];
+
+    await client.restoreBackup(
+      new File(["archive"], "diary.zip", { type: "application/zip" }),
+      (event) => phases.push(event.phase),
+    );
+
+    expect(phases).toEqual([
+      "VALIDATING",
+      "SAFETY_BACKUP",
+      "RESTORING",
+      "REBUILDING",
+      "DONE",
+    ]);
+    expect((request.mock.calls[0]?.[1]?.body as FormData).get("archive")).toBeInstanceOf(File);
+  });
+
+  it("surfaces a streamed FAILED event as a retryable restore error", async () => {
+    const response = new Response(
+      '{"phase":"VALIDATING"}\n{"phase":"FAILED","error":"ARCHIVE_MANIFEST_INVALID"}\n',
+      { status: 200 },
+    );
+    const client = createApiClient(async () => response);
+
+    await expect(client.restoreBackup(
+      new File(["bad"], "bad.zip", { type: "application/zip" }),
+      () => {},
+    )).rejects.toThrow("ARCHIVE_MANIFEST_INVALID");
+  });
 });

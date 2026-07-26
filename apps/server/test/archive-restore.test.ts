@@ -206,7 +206,13 @@ describe("complete archive restore", () => {
     const boundary = "restore-test-boundary"; const bytes = await readFile(archive);
     const body = Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="archive"; filename="archive.zip"\r\nContent-Type: application/zip\r\n\r\n`), bytes, Buffer.from(`\r\n--${boundary}--\r\n`)]);
     const restored = await server.inject({ method: "POST", url: "/api/v1/backups/restore", headers: { "content-type": `multipart/form-data; boundary=${boundary}` }, payload: body });
-    expect(restored.body).toContain("DONE");
+    expect(restored.body.trim().split("\n").map((line) => JSON.parse(line).phase)).toEqual([
+      "VALIDATING",
+      "SAFETY_BACKUP",
+      "RESTORING",
+      "REBUILDING",
+      "DONE",
+    ]);
     const safetyDatabase = createDiaryDatabase(dataRoot);
     const safetySnapshots = new SnapshotService({ dataRoot, backupRoot, database: safetyDatabase });
     const safety = (await safetySnapshots.listSafety()).at(-1);
@@ -221,6 +227,38 @@ describe("complete archive restore", () => {
     expect(JSON.parse((await server.inject({ method: "GET", url: "/api/v1/search?q=kept" })).body).items).toHaveLength(1);
     const next = await server.inject({ method: "PUT", url: "/api/v1/draft", payload: { title: "After", markdown: "after restore", tags: [] } });
     expect(next.statusCode).toBe(200);
+  });
+
+  it("streams FAILED for a corrupt uploaded archive without mutating live data", async () => {
+    const dataRoot = temp("archive-corrupt-route-");
+    const server = buildServer({ dataRoot, backupRoot: temp("archive-corrupt-backup-") });
+    servers.push(server);
+    await server.inject({
+      method: "PUT",
+      url: "/api/v1/draft",
+      payload: { title: "Untouched", markdown: "The current diary remains.", tags: [] },
+    });
+    await server.inject({ method: "POST", url: "/api/v1/draft/publish" });
+    const boundary = "corrupt-restore-boundary";
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="archive"; filename="archive.zip"\r\nContent-Type: application/zip\r\n\r\n`),
+      Buffer.from("not a zip"),
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]);
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/v1/backups/restore",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      payload: body,
+    });
+
+    expect(response.body.trim().split("\n").map((line) => JSON.parse(line).phase)).toEqual([
+      "VALIDATING",
+      "FAILED",
+    ]);
+    expect(JSON.parse((await server.inject({ method: "GET", url: "/api/v1/entries" })).body)[0].markdown)
+      .toBe("The current diary remains.");
   });
 
   function temp(prefix: string): string {
