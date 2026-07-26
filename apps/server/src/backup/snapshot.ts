@@ -41,6 +41,8 @@ type SnapshotLease = {
   token: string;
   lost: Error | null;
   heartbeat: ReturnType<typeof setInterval>;
+  heartbeatTail: Promise<void>;
+  heartbeatsStopped: boolean;
   runMarkers: Set<string>;
 };
 
@@ -241,7 +243,7 @@ export class SnapshotService {
   }
 
   private async beginManifestCommit(lease: SnapshotLease): Promise<void> {
-    clearInterval(lease.heartbeat);
+    await this.stopHeartbeats(lease);
     await this.assertLeaseOwnership(lease);
   }
 
@@ -382,8 +384,17 @@ export class SnapshotService {
           processStartNonce: this.processStartNonce,
           createdAt: this.now().toISOString(),
         }), { flag: "wx" });
-        const lease: SnapshotLease = { lock, owner, token, lost: null, heartbeat: undefined!, runMarkers: new Set() };
-        lease.heartbeat = setInterval(() => { void this.refreshLease(lease).catch((error) => { lease.lost = asLeaseLost(error); }); }, this.leaseHeartbeatIntervalMs);
+        const lease: SnapshotLease = {
+          lock,
+          owner,
+          token,
+          lost: null,
+          heartbeat: undefined!,
+          heartbeatTail: Promise.resolve(),
+          heartbeatsStopped: false,
+          runMarkers: new Set(),
+        };
+        lease.heartbeat = setInterval(() => { this.scheduleHeartbeat(lease); }, this.leaseHeartbeatIntervalMs);
         return lease;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -401,7 +412,7 @@ export class SnapshotService {
   }
 
   private async releaseFilesystemLock(lease: SnapshotLease): Promise<void> {
-    clearInterval(lease.heartbeat);
+    await this.stopHeartbeats(lease, false);
     const current = await readLeaseOwner(lease.owner);
     if (current?.token === lease.token) await rm(lease.lock, { recursive: true, force: true });
   }
@@ -441,6 +452,25 @@ export class SnapshotService {
       lease.lost = asLeaseLost(error);
       throw lease.lost;
     }
+  }
+
+  private scheduleHeartbeat(lease: SnapshotLease): void {
+    if (lease.heartbeatsStopped) return;
+    lease.heartbeatTail = lease.heartbeatTail.then(
+      () => this.refreshLease(lease),
+      () => this.refreshLease(lease),
+    ).catch((error) => {
+      lease.lost = asLeaseLost(error);
+    });
+  }
+
+  private async stopHeartbeats(lease: SnapshotLease, throwOnFailure = true): Promise<void> {
+    if (!lease.heartbeatsStopped) {
+      lease.heartbeatsStopped = true;
+      clearInterval(lease.heartbeat);
+    }
+    await lease.heartbeatTail;
+    if (throwOnFailure && lease.lost) throw lease.lost;
   }
 
   private async assertLeaseOwnership(lease: SnapshotLease): Promise<void> {

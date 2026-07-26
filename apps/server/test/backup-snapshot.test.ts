@@ -194,6 +194,35 @@ describe("backup snapshots", () => {
     expect(await snapshots.list()).toEqual([]);
   });
 
+  it("waits for an in-flight heartbeat failure before publishing a prepared manifest", async () => {
+    const { dataRoot, backupRoot, database } = fixture();
+    let writingManifest = false;
+    let heartbeatStarted!: () => void;
+    const started = new Promise<void>((resolve) => { heartbeatStarted = resolve; });
+    let rejectHeartbeat!: (error: Error) => void;
+    const pendingHeartbeat = new Promise<void>((_resolve, reject) => { rejectHeartbeat = reject; });
+    const snapshots = new SnapshotService({
+      dataRoot,
+      backupRoot,
+      database,
+      leaseHeartbeatIntervalMs: 25,
+      leaseHeartbeat: async () => {
+        if (!writingManifest) return;
+        heartbeatStarted();
+        await pendingHeartbeat;
+      },
+      writeManifestTemporary: async (pathname, contents) => {
+        writingManifest = true;
+        writeFileSync(pathname, contents);
+        await started;
+        setTimeout(() => rejectHeartbeat(new Error("late heartbeat failure")), 0);
+      },
+    });
+
+    await expect(snapshots.create("2026-07-26")).rejects.toThrow("BACKUP_LEASE_LOST");
+    expect(await snapshots.list()).toEqual([]);
+  });
+
   it("does not publish a manifest when writing its temporary file fails", async () => {
     const { dataRoot, backupRoot, database } = fixture();
     const snapshots = new SnapshotService({
