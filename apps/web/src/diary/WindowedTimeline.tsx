@@ -1,5 +1,5 @@
 import type { Entry } from "@diary/contracts";
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PlayerStore } from "../music/player-store";
 import { EntryBody } from "./EntryBody";
 import { formatEnglishDayMeta, groupEntriesByBeijingDay } from "./date-groups";
@@ -23,8 +23,9 @@ const SIDE_DAYS = 7;
 export function WindowedTimeline({ entries, activeDay, onActiveDayChange, onEditEntry, onTrashEntry, player, onNeedOlder, onNeedNewer, preserveAnchor = true, pagingEnabled = true }: Props) {
   const groups = useMemo(() => groupEntriesByBeijingDay(entries), [entries]);
   const activeIndex = Math.max(0, groups.findIndex((group) => group.day === activeDay));
-  const start = Math.max(0, activeIndex - SIDE_DAYS);
-  const end = Math.min(groups.length, activeIndex + SIDE_DAYS + 1);
+  const [windowStart, setWindowStart] = useState(0);
+  const start = Math.min(Math.max(0, windowStart), Math.max(0, groups.length - (SIDE_DAYS * 2 + 1)));
+  const end = Math.min(groups.length, start + SIDE_DAYS * 2 + 1);
   const visible = groups.slice(start, end);
   const timelineRef = useRef<HTMLElement>(null);
   const heights = useRef(new Map<string, number>());
@@ -38,6 +39,12 @@ export function WindowedTimeline({ entries, activeDay, onActiveDayChange, onEdit
   const edgeRequest = useRef<"older" | "newer" | null>(null);
   needOlder.current = onNeedOlder;
   needNewer.current = onNeedNewer;
+
+  useEffect(() => {
+    if (activeIndex < start || activeIndex >= end) {
+      setWindowStart(Math.max(0, activeIndex - SIDE_DAYS));
+    }
+  }, [activeIndex, end, start]);
 
 
   useLayoutEffect(() => {
@@ -68,8 +75,8 @@ export function WindowedTimeline({ entries, activeDay, onActiveDayChange, onEdit
       }
       if (edgeRequest.current === edge) return;
       edgeRequest.current = edge;
-      if (edge === "older") needOlder.current?.();
-      else needNewer.current?.();
+      if (edge === "older") { setWindowStart((current) => current + SIDE_DAYS); needOlder.current?.(); }
+      else { setWindowStart((current) => Math.max(0, current - SIDE_DAYS)); needNewer.current?.(); }
       window.setTimeout(() => { edgeRequest.current = null; }, 250);
     };
     window.addEventListener("scroll", trackDirection, { passive: true });
@@ -107,8 +114,8 @@ export function WindowedTimeline({ entries, activeDay, onActiveDayChange, onEdit
       for (const item of items) {
         if (!item.isIntersecting) continue;
         if (!pagingEnabled) continue;
-        if (item.target === topSentinel.current && scrollDirection.current === "up") needNewer.current?.();
-        if (item.target === bottomSentinel.current && scrollDirection.current === "down") needOlder.current?.();
+        if (item.target === topSentinel.current && scrollDirection.current === "up") { setWindowStart((current) => Math.max(0, current - SIDE_DAYS)); needNewer.current?.(); }
+        if (item.target === bottomSentinel.current && scrollDirection.current === "down") { setWindowStart((current) => current + SIDE_DAYS); needOlder.current?.(); }
       }
     }, { rootMargin: "400px 0px" });
     if (topSentinel.current) observer.observe(topSentinel.current);
@@ -117,7 +124,7 @@ export function WindowedTimeline({ entries, activeDay, onActiveDayChange, onEdit
   }, [groups.map((group) => group.day).join("|"), pagingEnabled]);
 
   if (!groups.length) return <main className="reading-page reading-page-empty"><h1 className="visually-hidden">DIARY</h1><p className="reading-status">NO PUBLISHED ENTRIES</p></main>;
-  const omittedHeight = (items: typeof groups) => items.reduce((total, item) => total + (heights.current.get(item.day) ?? 0), 0);
+  const omittedHeight = (items: typeof groups) => items.reduce((total, item) => total + (heights.current.get(item.day) ?? Math.max(180, item.entries.length * 110)), 0);
   return <main className="reading-page" ref={timelineRef}>
     <h1 className="visually-hidden">DIARY</h1>
     <div ref={topSentinel} aria-hidden="true" />
