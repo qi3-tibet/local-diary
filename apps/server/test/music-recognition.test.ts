@@ -7,9 +7,17 @@ import { createDiaryDatabase, type DiaryDatabase } from "../src/db/client.js";
 import { EntryRepository } from "../src/entries/repository.js";
 import { MediaStore } from "../src/media/store.js";
 import { MusicService } from "../src/music/service.js";
-import { createAcoustIdFingerprintLookup, runFpcalc } from "../src/music/recognition/fingerprint.js";
+import {
+  createAcoustIdFingerprintLookup,
+  runFpcalc,
+  type ExecFileRunner,
+} from "../src/music/recognition/fingerprint.js";
 import { applyOverrides, recognizeMusic } from "../src/music/recognition/pipeline.js";
-import { createMusicBrainzTextLookup } from "../src/music/recognition/text-lookup.js";
+import { MusicRecognitionService } from "../src/music/recognition/service.js";
+import {
+  createMusicBrainzRequestPacer,
+  createMusicBrainzTextLookup,
+} from "../src/music/recognition/text-lookup.js";
 import type {
   FingerprintLookup,
   RecognitionCandidate,
@@ -91,7 +99,12 @@ describe("MusicBrainz text lookup adapter", () => {
         },
       ],
     }), { status: 200, headers: { "content-type": "application/json" } }));
-    const lookup = createMusicBrainzTextLookup({ request, timeoutMs: 50 });
+    const lookup = createMusicBrainzTextLookup({
+      request,
+      timeoutMs: 50,
+      contact: "https://example.test/local-diary",
+      pacer: noWaitMusicBrainzPacer(),
+    });
 
     const results = await lookup.search({
       embedded: { title: "雨 / ? #", artist: "某人", album: "夜", year: null, coverMediaId: null },
@@ -119,13 +132,45 @@ describe("MusicBrainz text lookup adapter", () => {
     expect(parsed.searchParams.get("fmt")).toBe("json");
     expect(parsed.searchParams.get("query")).toContain("雨 / ? #");
     expect(parsed.searchParams.get("query")).not.toContain("..\\");
-    expect(new Headers(init?.headers).get("user-agent")).toMatch(/^LocalDiary\/\d/);
+    expect(new Headers(init?.headers).get("user-agent"))
+      .toBe("LocalDiary/0.1 (https://example.test/local-diary)");
     expect(init?.redirect).toBe("error");
+  });
+
+  it("paces production requests at least one second apart across adapter instances", async () => {
+    let now = 10_000;
+    const sleeps: number[] = [];
+    const starts: number[] = [];
+    const pacer = createMusicBrainzRequestPacer({
+      now: () => now,
+      sleep: async (milliseconds) => {
+        sleeps.push(milliseconds);
+        now += milliseconds;
+      },
+    });
+    const request = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => {
+      starts.push(now);
+      return new Response(JSON.stringify({ recordings: [] }), { status: 200 });
+    });
+    const first = createMusicBrainzTextLookup({ request, pacer });
+    const second = createMusicBrainzTextLookup({ request, pacer });
+    const input = {
+      embedded: { title: "Song", artist: null, album: null, year: null, coverMediaId: null },
+      filename: "song.mp3",
+    };
+
+    await Promise.all([first.search(input), second.search(input)]);
+
+    expect(starts).toEqual([10_000, 11_000]);
+    expect(sleeps).toEqual([1_000]);
   });
 
   it("returns no candidates for empty signals, non-success, timeout, or malformed payloads", async () => {
     const never = vi.fn(async () => new Response("{}"));
-    expect(await createMusicBrainzTextLookup({ request: never }).search({
+    expect(await createMusicBrainzTextLookup({
+      request: never,
+      pacer: noWaitMusicBrainzPacer(),
+    }).search({
       embedded: { title: null, artist: null, album: null, year: null, coverMediaId: null },
       filename: " .mp3",
     })).toEqual([]);
@@ -136,7 +181,11 @@ describe("MusicBrainz text lookup adapter", () => {
       new Response("{", { status: 200 }),
       new Response(JSON.stringify({ recordings: [{ id: "not-a-uuid", score: "NaN" }] }), { status: 200 }),
     ]) {
-      const lookup = createMusicBrainzTextLookup({ request: async () => response, timeoutMs: 10 });
+      const lookup = createMusicBrainzTextLookup({
+        request: async () => response,
+        timeoutMs: 10,
+        pacer: noWaitMusicBrainzPacer(),
+      });
       await expect(lookup.search({
         embedded: { title: "Song", artist: null, album: null, year: null, coverMediaId: null },
         filename: "song.mp3",
@@ -362,6 +411,10 @@ describe("music recognition routes", () => {
       recognitionStatus: "manual",
     });
 
+    await context.server.inject({
+      method: "POST",
+      url: `/api/v1/entries/${context.entryId}/music/recognition`,
+    });
     const selected = await context.server.inject({
       method: "POST",
       url: `/api/v1/entries/${context.entryId}/music/recognition/selection`,
@@ -445,6 +498,147 @@ describe("music recognition routes", () => {
     });
     expect(missing.statusCode).toBe(404);
   });
+
+  it("resolves a relative application data root before fingerprinting", async () => {
+    const dataRoot = mkdtempSync(path.join(process.cwd(), "relative-recognition-"));
+    roots.push(dataRoot);
+    const relativeRoot = path.relative(process.cwd(), dataRoot);
+    const fpcalcArguments: string[][] = [];
+    const execute: ExecFileRunner = async (_executable, args) => {
+      fpcalcArguments.push(args);
+      return {
+        stdout: JSON.stringify({ duration: 180, fingerprint: "A_B-C" }),
+        stderr: "",
+      };
+    };
+    const fingerprint = createAcoustIdFingerprintLookup({
+      clientKey: "test-key",
+      executable: "C:\\tools\\fpcalc.exe",
+      execute,
+      request: async () => new Response(JSON.stringify({ status: "ok", results: [] })),
+    });
+    const server = buildServer({
+      dataRoot: relativeRoot,
+      musicRecognition: {
+        textLookup: fakeTextLookup([]),
+        fingerprintLookup: fingerprint,
+      },
+    });
+    servers.push(server);
+    await server.inject({
+      method: "PUT",
+      url: "/api/v1/draft",
+      payload: { title: "Relative", markdown: "Root", tags: [] },
+    });
+    const entry = await server.inject({ method: "POST", url: "/api/v1/draft/publish" });
+    await server.inject(multipartRequest(
+      "POST",
+      `/api/v1/entries/${entry.json().id}/music`,
+      realMp3(),
+      "audio/mpeg",
+      "relative.mp3",
+    ));
+
+    await server.inject({
+      method: "POST",
+      url: `/api/v1/entries/${entry.json().id}/music/recognition`,
+    });
+
+    expect(path.isAbsolute(fpcalcArguments[0]![2]!)).toBe(true);
+  });
+});
+
+describe("music recognition concurrency", () => {
+  const roots: string[] = [];
+  const databases: DiaryDatabase[] = [];
+
+  afterEach(() => {
+    databases.splice(0).forEach((database) => database.close());
+    roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true }));
+  });
+
+  it("prevents an older slow recognition from overwriting a newer result", async () => {
+    const lookup = queuedTextLookup();
+    const context = await createRecognitionService(roots, databases, lookup);
+
+    const older = context.recognition.request(context.entryId);
+    const newer = context.recognition.request(context.entryId);
+    lookup.pending[1]!.resolve([candidate({ id: "newer", title: "Newer", score: 0.98 })]);
+    await expect(newer).resolves.toMatchObject({
+      candidates: [{ id: "newer" }],
+      recognitionStatus: "candidates",
+    });
+    lookup.pending[0]!.resolve([candidate({ id: "older", title: "Older", score: 0.99 })]);
+
+    await expect(older).resolves.toMatchObject({
+      candidates: [{ id: "newer" }],
+      recognitionStatus: "candidates",
+    });
+    expect(context.recognition.listCandidates(context.entryId).map((item) => item.id))
+      .toEqual(["newer"]);
+  });
+
+  it("keeps a manual patch authoritative when a slow recognition finishes later", async () => {
+    const lookup = queuedTextLookup();
+    const context = await createRecognitionService(roots, databases, lookup);
+
+    const slow = context.recognition.request(context.entryId);
+    const manual = context.recognition.patchOverrides(context.entryId, {
+      title: "Manual title",
+      artist: "Manual artist",
+    });
+    expect(manual).toMatchObject({
+      title: "Manual title",
+      artist: "Manual artist",
+      recognitionStatus: "manual",
+      candidates: [],
+    });
+    lookup.pending[0]!.resolve([candidate({ id: "late", title: "Late result", score: 0.99 })]);
+
+    await expect(slow).resolves.toMatchObject({
+      title: "Manual title",
+      artist: "Manual artist",
+      recognitionStatus: "manual",
+      candidates: [],
+    });
+    expect(() => context.recognition.selectCandidate(context.entryId, "late"))
+      .toThrow("RECOGNITION_CANDIDATE_NOT_FOUND");
+  });
+
+  it("lets an explicit candidate selection invalidate a newer in-flight recognition", async () => {
+    const lookup = queuedTextLookup();
+    const context = await createRecognitionService(roots, databases, lookup);
+
+    const initial = context.recognition.request(context.entryId);
+    lookup.pending[0]!.resolve([candidate({
+      id: "chosen",
+      title: "Chosen title",
+      artist: "Chosen artist",
+      score: 0.97,
+    })]);
+    await initial;
+
+    const newer = context.recognition.request(context.entryId);
+    const selected = context.recognition.selectCandidate(context.entryId, "chosen");
+    expect(selected).toMatchObject({
+      title: "Chosen title",
+      selectedCandidateId: "chosen",
+      recognitionStatus: "recognized",
+      candidates: [],
+    });
+    lookup.pending[1]!.resolve([candidate({
+      id: "late-newer",
+      title: "Late newer title",
+      score: 0.99,
+    })]);
+
+    await expect(newer).resolves.toMatchObject({
+      title: "Chosen title",
+      selectedCandidateId: "chosen",
+      recognitionStatus: "recognized",
+      candidates: [],
+    });
+  });
 });
 
 function candidate(overrides: Partial<RecognitionCandidate> = {}): RecognitionCandidate {
@@ -459,6 +653,14 @@ function candidate(overrides: Partial<RecognitionCandidate> = {}): RecognitionCa
     score: 0.5,
     source: "text",
     ...overrides,
+  };
+}
+
+function noWaitMusicBrainzPacer() {
+  return {
+    schedule<T>(request: () => Promise<T>): Promise<T> {
+      return request();
+    },
   };
 }
 
@@ -487,6 +689,28 @@ function fakeFingerprintLookup(candidates: RecognitionCandidate[]): FingerprintL
   };
 }
 
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve(value: T): void;
+};
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => { resolve = next; });
+  return { promise, resolve };
+}
+
+function queuedTextLookup(): TextLookup & { pending: Array<Deferred<RecognitionCandidate[]>> } {
+  return {
+    pending: [],
+    search() {
+      const next = deferred<RecognitionCandidate[]>();
+      this.pending.push(next);
+      return next.promise;
+    },
+  };
+}
+
 async function createRecognizableEntry(
   roots: string[],
   databases: DiaryDatabase[],
@@ -510,9 +734,55 @@ async function createRecognizableEntry(
   return { dataRoot, database, entryId: entry.id, server };
 }
 
+async function createRecognitionService(
+  roots: string[],
+  databases: DiaryDatabase[],
+  textLookup: TextLookup,
+) {
+  const dataRoot = mkdtempSync(path.join(tmpdir(), "local-diary-recognition-race-"));
+  const database = createDiaryDatabase(dataRoot);
+  roots.push(dataRoot);
+  databases.push(database);
+  const entries = new EntryRepository(database);
+  const draft = entries.saveDraft({ title: "Song", markdown: "A song", tags: [] });
+  const entry = entries.publishDraft(draft.id, "2026-07-26T08:00:00.000Z");
+  const store = new MediaStore(path.join(dataRoot, "media"));
+  await new MusicService(database, store).attach(entry.id, realMp3(), "song.mp3");
+  return {
+    database,
+    entryId: entry.id,
+    recognition: new MusicRecognitionService(
+      database,
+      store,
+      textLookup,
+      fakeFingerprintLookup([]),
+    ),
+  };
+}
+
 function realMp3(): Buffer {
   return Buffer.from(
     "SUQzBAAAAAAAIlRTU0UAAAAOAAADTGF2ZjYxLjcuMTAwAAAAAAAAAAAAAAD/4zjAAAAAAAAAAAAASW5mbwAAAA8AAAAAAAAA2AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAATGF2YzYxLjE5AAAAAAAAAAAAAAAAAAAAAAAAAAAAANgAAPVdAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     "base64",
   );
+}
+
+function multipartRequest(
+  method: "POST" | "PATCH",
+  url: string,
+  bytes: Buffer,
+  mime: string,
+  filename: string,
+) {
+  const boundary = "recognition-upload-boundary";
+  return {
+    method,
+    url,
+    headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+    payload: Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="music"; filename="${filename}"\r\nContent-Type: ${mime}\r\n\r\n`),
+      bytes,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]),
+  };
 }

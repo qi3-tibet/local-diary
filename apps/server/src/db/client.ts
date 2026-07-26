@@ -79,6 +79,13 @@ const migration006 = `
   ALTER TABLE entry_music ADD COLUMN selected_candidate_id TEXT;
 `;
 
+const migration007 = `
+  ALTER TABLE entry_music ADD COLUMN recognition_revision INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE entry_music ADD COLUMN metadata_revision INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE entry_music ADD COLUMN recognition_candidates_metadata_revision INTEGER;
+  UPDATE entry_music SET recognition_candidates_json = '[]';
+`;
+
 export function migrateDiaryDatabase(db: DiaryDatabase): void {
   db.pragma("foreign_keys = ON");
   const version = db.pragma("user_version", { simple: true }) as number;
@@ -130,6 +137,13 @@ export function migrateDiaryDatabase(db: DiaryDatabase): void {
     db.transaction(() => {
       db.exec(migration006);
       db.pragma("user_version = 6");
+    })();
+  }
+
+  if (version < 7) {
+    db.transaction(() => {
+      db.exec(migration007);
+      db.pragma("user_version = 7");
     })();
   }
 }

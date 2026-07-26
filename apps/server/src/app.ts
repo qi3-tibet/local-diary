@@ -30,7 +30,7 @@ export type ServerOptions = {
 
 export function buildServer(options: ServerOptions = {}) {
   const server = Fastify({ logger: false });
-  const dataRoot = options.dataRoot ?? "data";
+  const dataRoot = path.resolve(options.dataRoot ?? "data");
   const database = options.database ?? createDiaryDatabase(dataRoot);
   const entries = new EntryRepository(database);
   const service = new EntryService(

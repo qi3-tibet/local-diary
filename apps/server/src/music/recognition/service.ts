@@ -26,6 +26,9 @@ type MusicRow = {
   recognition_candidates_json: string;
   recognition_source: "text" | "fingerprint" | "manual" | null;
   selected_candidate_id: string | null;
+  recognition_revision: number;
+  metadata_revision: number;
+  recognition_candidates_metadata_revision: number | null;
   original_hash: string;
   original_extension: string;
 };
@@ -61,35 +64,57 @@ export class MusicRecognitionService {
   ) {}
 
   async request(entryId: string): Promise<MusicRecognitionResponse> {
-    const row = this.getRow(entryId);
-    const base = fieldsFromRow(row);
-    const effective = applyOverrides(base, parseOverrides(row.user_overrides_json));
+    const started = this.database.transaction(() => {
+      this.getRow(entryId);
+      this.database.prepare(`
+        UPDATE entry_music
+        SET recognition_revision = recognition_revision + 1
+        WHERE entry_id = ?
+      `).run(entryId);
+      return this.getRow(entryId);
+    })();
+    const effective = applyOverrides(
+      fieldsFromRow(started),
+      parseOverrides(started.user_overrides_json),
+    );
     const result = await recognizeMusic(
       effective,
-      row.original_filename,
+      started.original_filename,
       this.textLookup,
       this.fingerprintLookup,
-      this.store.pathFor(row.original_hash, row.original_extension),
+      this.store.pathFor(started.original_hash, started.original_extension),
     );
     const status: MusicRecognitionStatus = result.manualRequired
       ? "manual_required"
       : "candidates";
-    this.database.prepare(`
-      UPDATE entry_music
-      SET recognition_status = ?, recognition_candidates_json = ?,
-        recognition_source = ?, selected_candidate_id = NULL
-      WHERE entry_id = ?
-    `).run(status, JSON.stringify(result.candidates), result.source, entryId);
+    this.database.transaction(() => {
+      this.database.prepare(`
+        UPDATE entry_music
+        SET recognition_status = ?, recognition_candidates_json = ?,
+          recognition_source = ?,
+          recognition_candidates_metadata_revision = metadata_revision
+        WHERE entry_id = ?
+          AND recognition_revision = ?
+          AND metadata_revision = ?
+      `).run(
+        status,
+        JSON.stringify(result.candidates),
+        result.source,
+        entryId,
+        started.recognition_revision,
+        started.metadata_revision,
+      );
+    })();
     return this.response(this.getRow(entryId));
   }
 
   listCandidates(entryId: string): RecognitionCandidate[] {
-    return parseCandidates(this.getRow(entryId).recognition_candidates_json);
+    return validCandidates(this.getRow(entryId));
   }
 
   selectCandidate(entryId: string, candidateId: string): MusicRecognitionResponse {
     const row = this.getRow(entryId);
-    const candidate = parseCandidates(row.recognition_candidates_json)
+    const candidate = validCandidates(row)
       .find((item) => item.id === candidateId);
     if (!candidate) throw new MusicRecognitionValidationError("RECOGNITION_CANDIDATE_NOT_FOUND");
     const selected = supplementCandidate(candidate, fieldsFromRow(row));
@@ -101,7 +126,11 @@ export class MusicRecognitionService {
       this.database.prepare(`
         UPDATE entry_music SET
           title = ?, artist = ?, album = ?, year = ?, cover_media_id = ?,
-          recognition_status = ?, selected_candidate_id = ?
+          recognition_status = ?, selected_candidate_id = ?,
+          recognition_revision = recognition_revision + 1,
+          metadata_revision = metadata_revision + 1,
+          recognition_candidates_json = '[]',
+          recognition_candidates_metadata_revision = NULL
         WHERE entry_id = ?
       `).run(
         selected.title,
@@ -130,7 +159,11 @@ export class MusicRecognitionService {
     this.database.transaction(() => {
       this.database.prepare(`
         UPDATE entry_music
-        SET user_overrides_json = ?, recognition_status = 'manual'
+        SET user_overrides_json = ?, recognition_status = 'manual',
+          recognition_revision = recognition_revision + 1,
+          metadata_revision = metadata_revision + 1,
+          recognition_candidates_json = '[]',
+          recognition_candidates_metadata_revision = NULL
         WHERE entry_id = ?
       `).run(JSON.stringify(overrides), entryId);
       this.updateSearch(entryId, effective);
@@ -145,7 +178,10 @@ export class MusicRecognitionService {
         entry_music.year, entry_music.cover_media_id, entry_music.recognition_status,
         entry_music.user_overrides_json, entry_music.original_filename,
         entry_music.recognition_candidates_json, entry_music.recognition_source,
-        entry_music.selected_candidate_id, media.original_hash, media.original_extension
+        entry_music.selected_candidate_id, entry_music.recognition_revision,
+        entry_music.metadata_revision,
+        entry_music.recognition_candidates_metadata_revision,
+        media.original_hash, media.original_extension
       FROM entry_music
       INNER JOIN entries ON entries.id = entry_music.entry_id
       INNER JOIN media ON media.id = entry_music.media_id
@@ -160,7 +196,7 @@ export class MusicRecognitionService {
       mediaId: row.media_id,
       ...applyOverrides(fieldsFromRow(row), parseOverrides(row.user_overrides_json)),
       recognitionStatus: row.recognition_status,
-      candidates: parseCandidates(row.recognition_candidates_json),
+      candidates: validCandidates(row),
       selectedCandidateId: row.selected_candidate_id,
     };
   }
@@ -182,6 +218,12 @@ export class MusicRecognitionService {
       WHERE entry_id = ?
     `).run(metadata.title ?? "", metadata.artist ?? "", metadata.album ?? "", entryId);
   }
+}
+
+function validCandidates(row: MusicRow): RecognitionCandidate[] {
+  return row.recognition_candidates_metadata_revision === row.metadata_revision
+    ? parseCandidates(row.recognition_candidates_json)
+    : [];
 }
 
 function fieldsFromRow(row: MusicRow): MusicFields {

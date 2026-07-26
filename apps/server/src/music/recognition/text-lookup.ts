@@ -2,9 +2,10 @@ import path from "node:path";
 import type { RecognitionCandidate, TextLookup } from "./types.js";
 
 const MUSICBRAINZ_ENDPOINT = "https://musicbrainz.org/ws/2/recording";
-const USER_AGENT = "LocalDiary/0.1 (local personal diary)";
+const DEFAULT_CONTACT = "https://github.com/openai/codex/issues";
 const MAX_RESULTS = 5;
 const DEFAULT_TIMEOUT_MS = 6_000;
+const REQUEST_INTERVAL_MS = 1_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type Fetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -12,13 +13,50 @@ type Fetch = (input: string | URL | Request, init?: RequestInit) => Promise<Resp
 export type MusicBrainzTextLookupOptions = {
   request?: Fetch;
   timeoutMs?: number;
+  contact?: string;
+  pacer?: MusicBrainzRequestPacer;
 };
+
+export interface MusicBrainzRequestPacer {
+  schedule<T>(request: () => Promise<T>): Promise<T>;
+}
+
+type PacerOptions = {
+  now?: () => number;
+  sleep?: (milliseconds: number) => Promise<void>;
+};
+
+export function createMusicBrainzRequestPacer(
+  options: PacerOptions = {},
+): MusicBrainzRequestPacer {
+  const now = options.now ?? Date.now;
+  const sleep = options.sleep ?? ((milliseconds) =>
+    new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+  let tail = Promise.resolve();
+  let nextAllowedAt = 0;
+  return {
+    schedule<T>(request: () => Promise<T>): Promise<T> {
+      const scheduled = tail.then(async () => {
+        const wait = Math.max(0, nextAllowedAt - now());
+        if (wait > 0) await sleep(wait);
+        nextAllowedAt = now() + REQUEST_INTERVAL_MS;
+        return request();
+      });
+      tail = scheduled.then(() => undefined, () => undefined);
+      return scheduled;
+    },
+  };
+}
+
+const sharedProductionPacer = createMusicBrainzRequestPacer();
 
 export function createMusicBrainzTextLookup(
   options: MusicBrainzTextLookupOptions = {},
 ): TextLookup {
   const request = options.request ?? fetch;
   const timeoutMs = positiveTimeout(options.timeoutMs);
+  const pacer = options.pacer ?? sharedProductionPacer;
+  const userAgent = musicBrainzUserAgent(options.contact);
 
   return {
     async search({ embedded, filename }) {
@@ -40,14 +78,14 @@ export function createMusicBrainzTextLookup(
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const response = await request(url, {
+        const response = await pacer.schedule(() => request(url, {
           headers: {
             accept: "application/json",
-            "user-agent": USER_AGENT,
+            "user-agent": userAgent,
           },
           redirect: "error",
           signal: controller.signal,
-        });
+        }));
         if (!response.ok) return [];
         return parseMusicBrainzResponse(await response.json());
       } catch {
@@ -57,6 +95,13 @@ export function createMusicBrainzTextLookup(
       }
     },
   };
+}
+
+function musicBrainzUserAgent(contact: string | undefined): string {
+  const configured = contact ?? process.env.MUSICBRAINZ_CONTACT ?? DEFAULT_CONTACT;
+  const safeContact = configured.replace(/[\r\n()]/g, " ").trim().slice(0, 200)
+    || DEFAULT_CONTACT;
+  return `LocalDiary/0.1 (${safeContact})`;
 }
 
 function parseMusicBrainzResponse(payload: unknown): RecognitionCandidate[] {
