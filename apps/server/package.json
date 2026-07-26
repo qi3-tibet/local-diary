@@ -2,7 +2,14 @@
   "name": "@diary/server",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/app.d.ts",
+      "default": "./dist/app.js"
+    }
+  },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "start:e2e": "tsx src/e2e.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

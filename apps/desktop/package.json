@@ -1,0 +1,16 @@
+{
+  "name": "@diary/desktop",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm --filter @diary/server build && pnpm --filter @diary/web build && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@diary/server": "workspace:*"
+  },
+  "devDependencies": {
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3"
+  }
+}
