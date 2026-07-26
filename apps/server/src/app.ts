@@ -37,35 +37,34 @@ export type ServerOptions = {
 export function buildServer(options: ServerOptions = {}) {
   const server = Fastify({ logger: false });
   const dataRoot = path.resolve(options.dataRoot ?? "data");
-  const database = options.database ?? createDiaryDatabase(dataRoot);
-  const mediaStore = new MediaStore(path.join(dataRoot, "media"));
-  const entries = new EntryRepository(database, mediaStore);
-  const service = new EntryService(
-    entries,
-    options.clock ?? createBeijingClock(),
-  );
-  const images = new ImageService(database, mediaStore);
-  const music = new MusicService(database, mediaStore);
-  const recognition = new MusicRecognitionService(
-    database,
-    mediaStore,
-    options.musicRecognition?.textLookup ?? createMusicBrainzTextLookup(),
-    options.musicRecognition?.fingerprintLookup ?? createAcoustIdFingerprintLookup(),
-  );
-  const snapshots = new SnapshotService({
-    dataRoot,
-    backupRoot: path.resolve(options.backupRoot ?? path.join(dataRoot, "backup")),
-    database,
-  });
+  const clock = options.clock ?? createBeijingClock();
+  const backupRoot = path.resolve(options.backupRoot ?? path.join(dataRoot, "backup"));
+  let database = options.database ?? createDiaryDatabase(dataRoot);
+  let mediaStore = new MediaStore(path.join(dataRoot, "media"));
+  let entries = new EntryRepository(database, mediaStore);
+  let service = new EntryService(entries, clock);
+  let images = new ImageService(database, mediaStore);
+  let music = new MusicService(database, mediaStore);
+  let recognition = new MusicRecognitionService(database, mediaStore, options.musicRecognition?.textLookup ?? createMusicBrainzTextLookup(), options.musicRecognition?.fingerprintLookup ?? createAcoustIdFingerprintLookup());
+  let snapshots = new SnapshotService({ dataRoot, backupRoot, database });
+  const rebuild = () => { database = createDiaryDatabase(dataRoot); mediaStore = new MediaStore(path.join(dataRoot, "media")); entries = new EntryRepository(database, mediaStore); service = new EntryService(entries, clock); images = new ImageService(database, mediaStore); music = new MusicService(database, mediaStore); recognition = new MusicRecognitionService(database, mediaStore, options.musicRecognition?.textLookup ?? createMusicBrainzTextLookup(), options.musicRecognition?.fingerprintLookup ?? createAcoustIdFingerprintLookup()); snapshots = new SnapshotService({ dataRoot, backupRoot, database }); };
+  let blocked = false; let active = 0; let drained!: () => void; let drain = Promise.resolve();
+  server.addHook("onRequest", async (request, reply) => { if (request.url.startsWith("/api/v1/backups/restore")) return; if (blocked) return reply.code(503).send({ error: "RESTORE_IN_PROGRESS" }); (request as { restoreGate?: boolean }).restoreGate = true; active += 1; });
+  server.addHook("onResponse", async (request) => { if (!(request as { restoreGate?: boolean }).restoreGate) return; active -= 1; if (active === 0) drained?.(); });
+  const defaultRestoreContext = () => ({ dataRoot, temporaryRoot: path.join(dataRoot, ".temporary"), coordinator: {
+    acquireBarrier: async () => { blocked = true; if (active > 0) { drain = new Promise<void>((resolvePromise) => { drained = resolvePromise; }); await drain; } return () => { blocked = false; }; },
+    createSafetySnapshot: async () => { await snapshots.create(clock.dayKey(clock.publishedAt())); },
+    quiesce: async () => { database.close(); }, reopen: async () => { rebuild(); }, rebuildDerivedData: async () => {},
+  } });
 
   server.get("/api/v1/health", async () => ({ status: "ok", apiVersion: 1 }));
   void server.register(multipart);
-  void registerEntryRoutes(server, service, entries);
+  void registerEntryRoutes(server, () => service, () => entries);
   void registerSearchRoutes(server, entries);
   void registerMediaRoutes(server, images);
   void registerMusicRoutes(server, music, recognition, options.musicUploadLimit);
   void registerMusicStreamRoute(server, database, mediaStore);
-  registerBackupRoutes(server, { snapshots, temporaryRoot: path.join(dataRoot, ".temporary"), restoreContext: options.restoreContext });
+  registerBackupRoutes(server, { snapshots: () => snapshots, temporaryRoot: path.join(dataRoot, ".temporary"), restoreContext: options.restoreContext ?? defaultRestoreContext });
   server.addHook("onClose", async () => database.close());
 
   return server;

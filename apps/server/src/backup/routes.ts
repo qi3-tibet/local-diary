@@ -12,7 +12,7 @@ import { restoreArchive, type RestoreContext } from "./restore.js";
 const ARCHIVE_UPLOAD_LIMIT = 2 * 1024 * 1024 * 1024;
 
 export function registerBackupRoutes(server: FastifyInstance, options: {
-  snapshots: SnapshotService;
+  snapshots: () => SnapshotService;
   temporaryRoot: string;
   restoreContext?: () => RestoreContext | null;
 }): void {
@@ -23,7 +23,7 @@ export function registerBackupRoutes(server: FastifyInstance, options: {
     await mkdir(root, { recursive: true });
     const archive = join(root, `${randomUUID()}.zip`);
     try {
-      await exportArchive(snapshotId, options.snapshots, archive);
+      await exportArchive(snapshotId, options.snapshots(), archive);
       reply.header("content-type", "application/zip").header("content-disposition", `attachment; filename="diary-${snapshotId}.zip"`);
       reply.raw.once("close", () => { void rm(archive, { force: true }); });
       return reply.send(createReadStream(archive));
