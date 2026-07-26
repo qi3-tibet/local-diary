@@ -3,5 +3,7 @@
 node_modules/
 dist/
 apps/desktop/release/
+apps/web/e2e/*-snapshots/
+!apps/web/e2e/visual.spec.ts-snapshots/
 coverage/
 *.log

@@ -1,0 +1,37 @@
+appId: com.localdiary.app
+productName: Local Diary
+artifactName: Local-Diary-${version}-${arch}.${ext}
+directories:
+  output: release
+files:
+  - dist/**
+  - package.json
+  - node_modules/**
+extraResources:
+  - from: ../web/dist
+    to: web
+    filter:
+      - "**/*"
+  - from: assets/fpcalc.exe
+    to: fpcalc/fpcalc.exe
+asar: true
+npmRebuild: false
+asarUnpack:
+  - "**/node_modules/better-sqlite3/**"
+  - "**/*.node"
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: assets/app.ico
+  artifactName: Local-Diary-Setup-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Local Diary
+  include: build/installer.nsh
+  deleteAppDataOnUninstall: false

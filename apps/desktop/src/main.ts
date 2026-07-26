@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 import {
   createServiceLifecycle,
@@ -7,6 +8,7 @@ import {
 import { createDiaryWindow } from "./window.js";
 
 type DesktopWindow = {
+  isDestroyed?(): boolean;
   isMinimized(): boolean;
   restore(): void;
   focus(): void;
@@ -43,9 +45,12 @@ export function createDesktopHarness(options: DesktopHarnessOptions) {
   let quitAfterShutdown = false;
   let shutdown: Promise<void> | undefined;
   let browserOpenQueued = false;
+  let desktopWindowQueued = false;
+  let windowStarting: Promise<DesktopWindow> | undefined;
 
   const focusExistingWindow = () => {
-    const target = window ?? options.getWindows().at(0);
+    if (window?.isDestroyed?.()) window = undefined;
+    const target = window ?? options.getWindows().find((candidate) => !candidate.isDestroyed?.());
     if (!target) return false;
     if (target.isMinimized()) target.restore();
     target.focus();
@@ -61,13 +66,30 @@ export function createDesktopHarness(options: DesktopHarnessOptions) {
     return shutdown;
   };
 
-  options.app.on("second-instance", () => {
-    if (browserMode) {
+  const openDesktopWindow = async (reuseExisting = true) => {
+    if (reuseExisting && focusExistingWindow()) return window;
+    if (windowStarting) return windowStarting;
+    if (!service) {
+      desktopWindowQueued = true;
+      return undefined;
+    }
+    const pending = Promise.resolve(options.createWindow(service.url));
+    windowStarting = pending;
+    try {
+      window = await pending;
+      return window;
+    } finally {
+      if (windowStarting === pending) windowStarting = undefined;
+    }
+  };
+
+  options.app.on("second-instance", (_event: unknown, argv: string[] = []) => {
+    if (argv.includes("--browser")) {
       if (service) void options.shell.openExternal(service.url);
       else browserOpenQueued = true;
       return;
     }
-    focusExistingWindow();
+    void openDesktopWindow();
   });
 
   options.app.on("before-quit", (event: AppEvent) => {
@@ -81,8 +103,8 @@ export function createDesktopHarness(options: DesktopHarnessOptions) {
   });
 
   options.app.on("activate", () => {
-    if (browserMode || window || !service) return;
-    void Promise.resolve(options.createWindow(service.url)).then((next) => { window = next; });
+    if (window || !service) return;
+    void openDesktopWindow();
   });
 
   return {
@@ -99,9 +121,17 @@ export function createDesktopHarness(options: DesktopHarnessOptions) {
           browserOpenQueued = false;
           await options.shell.openExternal(service.url);
         }
+        if (desktopWindowQueued) {
+          desktopWindowQueued = false;
+          await openDesktopWindow();
+        }
         return;
       }
-      window = await options.createWindow(service.url);
+      await openDesktopWindow(false);
+      if (browserOpenQueued) {
+        browserOpenQueued = false;
+        await options.shell.openExternal(service.url);
+      }
     },
     async stop(): Promise<void> {
       await closeServiceThenQuit();
@@ -111,11 +141,41 @@ export function createDesktopHarness(options: DesktopHarnessOptions) {
 
 export type DesktopRoots = LocalServiceOptions & { webAssetsRoot: string };
 
-export function resolveDesktopRoots(userData: string, appPath: string, resourcesPath?: string): DesktopRoots {
+export function resolveDiaryDataHome(
+  currentUserData: string,
+  appData: string,
+  exists: (candidate: string) => boolean = existsSync,
+): string {
+  const current = path.resolve(currentUserData);
+  const legacy = path.join(path.resolve(appData), "@diary", "desktop");
+  if (exists(path.join(current, "data"))) return current;
+  if (
+    current.localeCompare(legacy, undefined, { sensitivity: "accent" }) !== 0
+    && exists(path.join(legacy, "data"))
+  ) {
+    return legacy;
+  }
+  return current;
+}
+
+export function resolveDesktopRoots(
+  userData: string,
+  appPath: string,
+  resourcesPath?: string,
+  documentsPath?: string,
+  backupRootOverride?: string,
+): DesktopRoots {
   const externalRoot = path.resolve(userData);
+  if (backupRootOverride && !path.isAbsolute(backupRootOverride)) {
+    throw new Error("Backup root override must be absolute.");
+  }
   return {
     dataRoot: path.join(externalRoot, "data"),
-    backupRoot: path.join(externalRoot, "backups"),
+    backupRoot: backupRootOverride
+      ? path.resolve(backupRootOverride)
+      : documentsPath
+      ? path.join(path.resolve(documentsPath), "Local Diary Backups")
+      : path.join(externalRoot, "backups"),
     tempRoot: path.join(externalRoot, "temp"),
     logRoot: path.join(externalRoot, "logs"),
     webAssetsRoot: resourcesPath
@@ -127,7 +187,17 @@ export function resolveDesktopRoots(userData: string, appPath: string, resources
 export async function runElectronMain(): Promise<void> {
   const electron = await import("electron");
   const { buildServer } = await import("@diary/server");
-  const roots = resolveDesktopRoots(electron.app.getPath("userData"), electron.app.getAppPath(), process.resourcesPath);
+  const diaryDataHome = resolveDiaryDataHome(
+    electron.app.getPath("userData"),
+    electron.app.getPath("appData"),
+  );
+  const roots = resolveDesktopRoots(
+    diaryDataHome,
+    electron.app.getAppPath(),
+    process.resourcesPath,
+    electron.app.getPath("documents"),
+    process.env.DIARY_BACKUP_ROOT?.trim() || undefined,
+  );
   const lifecycle = createServiceLifecycle(
     (serviceOptions) => buildServer(serviceOptions),
     roots,

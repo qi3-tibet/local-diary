@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Local Diary Fine Scale mark">
+  <g id="fine-scale-mark" fill="none" stroke-linecap="square">
+    <rect width="256" height="256" fill="#f2eee6" stroke="none"/>
+    <path d="M58 38v180" stroke="#a87442" stroke-width="12"/>
+    <path d="M58 70h23M58 128h38M58 186h23" stroke="#28251f" stroke-width="8"/>
+    <path d="M112 72h90M112 128h68M112 184h90" stroke="#28251f" stroke-width="10"/>
+  </g>
+</svg>

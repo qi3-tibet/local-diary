@@ -8,7 +8,8 @@
     "test:watch": "vitest",
     "typecheck": "pnpm -r typecheck",
     "test:e2e": "playwright test",
-    "test:e2e:cleanup": "node scripts/verify-playwright-cleanup.mjs"
+    "test:e2e:cleanup": "node scripts/verify-playwright-cleanup.mjs",
+    "release:win": "pnpm --filter @diary/desktop release:win"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",
