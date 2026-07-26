@@ -32,6 +32,10 @@ export function DateRail({ entries, activeDay, footer, onJumpDay }: DateRailProp
           <a
             className="date-link"
             href={`#day-${day}`}
+            onClick={(event) => {
+              event.preventDefault();
+              onJumpDay?.(day);
+            }}
             aria-label={formatDateLabel(day)}
             aria-current={activeDay === day ? "date" : undefined}
             key={day}

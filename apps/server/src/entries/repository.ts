@@ -22,7 +22,7 @@ type EntryRow = {
 };
 
 export type DayPage = {
-  days: Array<{ day: string; entries: Entry[] }>;
+  days: Array<{ day: string; totalEntries: number; entries: Entry[] }>;
   previousCursor: string | null;
   nextCursor: string | null;
 };
@@ -30,14 +30,21 @@ export type DayPage = {
 type DayPageOptions = {
   cursor?: string | null;
   direction: "older" | "newer";
-  limitDays?: number;
+  limitEntries?: number;
 };
 
+type EntryBoundary = {
+  publishedAt: string;
+  id: string;
+};
+
+const PROCESS_CURSOR_KEY = randomBytes(32);
+
 export class EntryRepository {
-  private readonly cursorKey = randomBytes(32);
   constructor(
     private readonly db: DiaryDatabase,
     private readonly mediaStore?: MediaStore,
+    private readonly cursorKey = PROCESS_CURSOR_KEY,
   ) {}
 
   saveDraft(input: DraftInput): Entry {
@@ -204,66 +211,127 @@ export class EntryRepository {
   }
 
   selectDayWindow(options: DayPageOptions): DayPage {
-    const limitDays = clampLimit(options.limitDays, 14, 1, 31);
-    const cursorDay = options.cursor ? decodeDayCursor(options.cursor, options.direction, this.cursorKey) : null;
+    const limitEntries = clampLimit(options.limitEntries, 120, 1, 120);
+    const boundary = options.cursor ? decodeEntryCursor(options.cursor, options.direction, this.cursorKey) : null;
     const comparison = options.direction === "older" ? "<" : ">";
     const order = options.direction === "older" ? "DESC" : "ASC";
-    const days = this.db.prepare(`
-      SELECT DISTINCT substr(published_at, 1, 10) AS day
-      FROM entries
-      WHERE state = 'published'
-        ${cursorDay ? `AND substr(published_at, 1, 10) ${comparison} ?` : ""}
-      ORDER BY day ${order}
-      LIMIT ?
-    `).all(...(cursorDay ? [cursorDay, limitDays] : [limitDays])) as Array<{ day: string }>;
-    const chronological = options.direction === "older" ? [...days].reverse() : days;
-    const grouped = chronological.map(({ day }) => ({
-      day,
-      entries: this.entriesForDay(day),
-    }));
-    const newest = (options.direction === "older" ? days[0] : days.at(-1))?.day ?? null;
-    const oldest = (options.direction === "older" ? days.at(-1) : days[0])?.day ?? null;
-    return {
-      days: grouped,
-      previousCursor: newest ? encodeDayCursor(newest, "newer", this.cursorKey) : null,
-      nextCursor: oldest ? encodeDayCursor(oldest, "older", this.cursorKey) : null,
-    };
-  }
-
-  private entriesForDay(day: string): Entry[] {
     const rows = this.db.prepare(`
       SELECT id, title, markdown, state, published_at, created_at, updated_at, deleted_at, edited_at
       FROM entries
-      WHERE state = 'published' AND substr(published_at, 1, 10) = ?
-      ORDER BY published_at DESC, id DESC
-    `).all(day) as EntryRow[];
-    return rows.map((row) => this.toEntry(row));
+      WHERE state = 'published'
+        ${boundary ? `AND (
+          published_at ${comparison} ?
+          OR (published_at = ? AND id ${comparison} ?)
+        )` : ""}
+      ORDER BY published_at ${order}, id ${order}
+      LIMIT ?
+    `).all(...(boundary
+      ? [boundary.publishedAt, boundary.publishedAt, boundary.id, limitEntries]
+      : [limitEntries])) as EntryRow[];
+    return this.pageFromRows(options.direction === "newer" ? rows.reverse() : rows);
   }
 
-  selectDaysAround(day: string, limitDays = 15): DayPage {
+  selectDaysAround(day: string, limitEntries = 120): DayPage {
     if (!isCalendarDay(day)) throw new Error("Invalid day");
-    const limit = clampLimit(limitDays, 15, 1, 31);
-    const before = Math.floor((limit - 1) / 2);
-    const after = limit - before - 1;
-    const older = this.db.prepare(`
-      SELECT DISTINCT substr(published_at, 1, 10) AS day
-      FROM entries WHERE state = 'published' AND substr(published_at, 1, 10) < ?
-      ORDER BY day DESC LIMIT ?
-    `).all(day, before) as Array<{ day: string }>;
-    const center = this.db.prepare(`
-      SELECT DISTINCT substr(published_at, 1, 10) AS day
-      FROM entries WHERE state = 'published' AND substr(published_at, 1, 10) = ?
-    `).all(day) as Array<{ day: string }>;
+    const limit = clampLimit(limitEntries, 120, 1, 120);
+    const newerLimit = Math.floor(limit / 2);
     const newer = this.db.prepare(`
-      SELECT DISTINCT substr(published_at, 1, 10) AS day
-      FROM entries WHERE state = 'published' AND substr(published_at, 1, 10) > ?
-      ORDER BY day ASC LIMIT ?
-    `).all(day, after) as Array<{ day: string }>;
-    const selected = [...older.reverse(), ...center, ...newer];
+      SELECT id, title, markdown, state, published_at, created_at, updated_at, deleted_at, edited_at
+      FROM entries
+      WHERE state = 'published' AND substr(published_at, 1, 10) > ?
+      ORDER BY published_at ASC, id ASC
+      LIMIT ?
+    `).all(day, newerLimit) as EntryRow[];
+    const centerAndOlder = this.db.prepare(`
+      SELECT id, title, markdown, state, published_at, created_at, updated_at, deleted_at, edited_at
+      FROM entries
+      WHERE state = 'published' AND substr(published_at, 1, 10) <= ?
+      ORDER BY published_at DESC, id DESC
+      LIMIT ?
+    `).all(day, limit - newer.length) as EntryRow[];
+    return this.pageFromRows(
+      [...newer, ...centerAndOlder]
+        .sort((left, right) => compareEntryRows(right, left)),
+    );
+  }
+
+  selectEntriesAround(entryId: string, limitEntries = 120): DayPage {
+    if (!isUuid(entryId)) throw new Error("Invalid entry target");
+    const target = this.db.prepare(`
+      SELECT id, title, markdown, state, published_at, created_at, updated_at, deleted_at, edited_at
+      FROM entries
+      WHERE id = ? AND state = 'published'
+    `).get(entryId) as EntryRow | undefined;
+    if (!target?.published_at) throw new Error("Published entry not found");
+    const limit = clampLimit(limitEntries, 120, 1, 120);
+    const newer = this.db.prepare(`
+      SELECT id, title, markdown, state, published_at, created_at, updated_at, deleted_at, edited_at
+      FROM entries
+      WHERE state = 'published' AND (
+        published_at > ?
+        OR (published_at = ? AND id > ?)
+      )
+      ORDER BY published_at ASC, id ASC
+      LIMIT ?
+    `).all(
+      target.published_at,
+      target.published_at,
+      target.id,
+      Math.floor(limit / 2),
+    ) as EntryRow[];
+    const centerAndOlder = this.db.prepare(`
+      SELECT id, title, markdown, state, published_at, created_at, updated_at, deleted_at, edited_at
+      FROM entries
+      WHERE state = 'published' AND (
+        published_at < ?
+        OR (published_at = ? AND id <= ?)
+      )
+      ORDER BY published_at DESC, id DESC
+      LIMIT ?
+    `).all(
+      target.published_at,
+      target.published_at,
+      target.id,
+      limit - newer.length,
+    ) as EntryRow[];
+    return this.pageFromRows(
+      [...newer, ...centerAndOlder]
+        .sort((left, right) => compareEntryRows(right, left)),
+    );
+  }
+
+  private pageFromRows(rows: EntryRow[]): DayPage {
+    if (!rows.length) return { days: [], previousCursor: null, nextCursor: null };
+    const days = [...new Set(rows.map((row) => row.published_at!.slice(0, 10)))];
+    const placeholders = days.map(() => "?").join(", ");
+    const counts = this.db.prepare(`
+      SELECT substr(published_at, 1, 10) AS day, COUNT(*) AS total
+      FROM entries
+      WHERE state = 'published' AND substr(published_at, 1, 10) IN (${placeholders})
+      GROUP BY substr(published_at, 1, 10)
+    `).all(...days) as Array<{ day: string; total: number }>;
+    const totals = new Map(counts.map(({ day, total }) => [day, total]));
+    const grouped = new Map<string, Entry[]>();
+    for (const row of rows) {
+      const day = row.published_at!.slice(0, 10);
+      grouped.set(day, [...(grouped.get(day) ?? []), this.toEntry(row)]);
+    }
+    const newest = rows[0]!;
+    const oldest = rows.at(-1)!;
     return {
-      days: selected.map(({ day: selectedDay }) => ({ day: selectedDay, entries: this.entriesForDay(selectedDay) })),
-      previousCursor: selected.at(-1) ? encodeDayCursor(selected.at(-1)!.day, "newer", this.cursorKey) : null,
-      nextCursor: selected[0] ? encodeDayCursor(selected[0].day, "older", this.cursorKey) : null,
+      days: [...grouped].map(([day, entries]) => ({
+        day,
+        totalEntries: totals.get(day) ?? entries.length,
+        entries,
+      })),
+      previousCursor: encodeEntryCursor({
+        publishedAt: newest.published_at!,
+        id: newest.id,
+      }, "newer", this.cursorKey),
+      nextCursor: encodeEntryCursor({
+        publishedAt: oldest.published_at!,
+        id: oldest.id,
+      }, "older", this.cursorKey),
     };
   }
 
@@ -505,13 +573,13 @@ function clampLimit(value: number | undefined, fallback: number, min: number, ma
   return Math.max(min, Math.min(max, Math.floor(value!)));
 }
 
-function encodeDayCursor(day: string, direction: "older" | "newer", key: Buffer): string {
-  const payload = Buffer.from(JSON.stringify({ day, direction, v: 1 }), "utf8").toString("base64url");
+function encodeEntryCursor(boundary: EntryBoundary, direction: "older" | "newer", key: Buffer): string {
+  const payload = Buffer.from(JSON.stringify({ ...boundary, direction, v: 2 }), "utf8").toString("base64url");
   const signature = createHmac("sha256", key).update(payload).digest("base64url");
   return `${payload}.${signature}`;
 }
 
-function decodeDayCursor(value: string, expectedDirection: "older" | "newer", key: Buffer): string {
+function decodeEntryCursor(value: string, expectedDirection: "older" | "newer", key: Buffer): EntryBoundary {
   try {
     const [payload, signature, extra] = value.split(".");
     if (!payload || !signature || extra) throw new Error();
@@ -522,14 +590,40 @@ function decodeDayCursor(value: string, expectedDirection: "older" | "newer", ke
     if (
       !decoded
       || typeof decoded !== "object"
-      || !isCalendarDay((decoded as { day?: unknown }).day)
+      || !isPublishedTimestamp((decoded as { publishedAt?: unknown }).publishedAt)
+      || !isUuid((decoded as { id?: unknown }).id)
       || (decoded as { direction?: unknown }).direction !== expectedDirection
-      || (decoded as { v?: unknown }).v !== 1
+      || (decoded as { v?: unknown }).v !== 2
     ) throw new Error();
-    return (decoded as { day: string }).day;
+    return decoded as EntryBoundary;
   } catch {
-    throw new Error("Invalid day cursor");
+    throw new Error("Invalid entry cursor");
   }
+}
+
+function isPublishedTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})(Z|[+-]\d{2}:\d{2})$/.exec(value);
+  if (!match || !isCalendarDay(match[1])) return false;
+  const hour = Number(match[2]);
+  const minute = Number(match[3]);
+  const second = Number(match[4]);
+  if (hour > 23 || minute > 59 || second > 59 || !Number.isFinite(Date.parse(value))) return false;
+  if (match[6] !== "Z") {
+    const [offsetHour, offsetMinute] = match[6].slice(1).split(":").map(Number);
+    if (offsetHour! > 14 || offsetMinute! > 59 || (offsetHour === 14 && offsetMinute !== 0)) return false;
+  }
+  return true;
+}
+
+function isUuid(value: unknown): value is string {
+  return typeof value === "string"
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function compareEntryRows(left: EntryRow, right: EntryRow): number {
+  const timestamp = left.published_at!.localeCompare(right.published_at!);
+  return timestamp || left.id.localeCompare(right.id);
 }
 
 function isCalendarDay(value: unknown): value is string {

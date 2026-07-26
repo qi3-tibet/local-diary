@@ -16,7 +16,7 @@ export type UploadedImage = {
 };
 
 export type DayPage = {
-  days: Array<{ day: string; entries: Entry[] }>;
+  days: Array<{ day: string; totalEntries: number; entries: Entry[] }>;
   previousCursor: string | null;
   nextCursor: string | null;
 };
@@ -88,9 +88,10 @@ export function createApiClient(request: Request = fetch) {
       return (await response.json()) as Entry[];
     },
 
-    async listDayPage(options: { day?: string; cursor?: string; direction?: "older" | "newer" } = {}): Promise<DayPage> {
-      const params = new URLSearchParams({ limit: "15" });
+    async listDayPage(options: { day?: string; entryId?: string; cursor?: string; direction?: "older" | "newer" } = {}): Promise<DayPage> {
+      const params = new URLSearchParams({ limit: "120" });
       if (options.day) params.set("day", options.day);
+      else if (options.entryId) params.set("entryId", options.entryId);
       else {
         params.set("direction", options.direction ?? "older");
         if (options.cursor) params.set("cursor", options.cursor);

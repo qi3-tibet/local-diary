@@ -17,6 +17,37 @@ const entry = {
 } as Entry;
 
 describe("diary API client", () => {
+  it("requests a hard-bounded entry page and retains full-day counts", async () => {
+    const response = {
+      days: [{ day: "2026-07-26", totalEntries: 20_000, entries: [entry] }],
+      previousCursor: "newer",
+      nextCursor: "older",
+    };
+    const request = vi.fn<RequestFn>(async () =>
+      new Response(JSON.stringify(response), { status: 200 }),
+    );
+    const client = createApiClient(request);
+
+    await expect(client.listDayPage({ day: "2026-07-26" })).resolves.toEqual(response);
+    expect(request).toHaveBeenCalledWith(
+      "/api/v1/entries/days?limit=120&day=2026-07-26",
+      { headers: { accept: "application/json" } },
+    );
+  });
+
+  it("requests a page centered on a published search result ID", async () => {
+    const request = vi.fn<RequestFn>(async () =>
+      new Response(JSON.stringify({ days: [], previousCursor: null, nextCursor: null }), { status: 200 }),
+    );
+    const client = createApiClient(request);
+
+    await client.listDayPage({ entryId: "00000000-0000-4000-8000-000000000001" });
+    expect(request).toHaveBeenCalledWith(
+      "/api/v1/entries/days?limit=120&entryId=00000000-0000-4000-8000-000000000001",
+      { headers: { accept: "application/json" } },
+    );
+  });
+
   it("returns the published entry array without adapting its shape", async () => {
     const entries = [{ id: "entry-1", title: "Kept by the contract" }];
     const request = vi.fn(async () => new Response(JSON.stringify(entries), { status: 200 }));

@@ -100,6 +100,12 @@ const migration009 = `
     WHERE state = 'published';
 `;
 
+const migration010 = `
+  CREATE INDEX entries_published_cursor
+    ON entries(state, published_at DESC, id DESC)
+    WHERE state = 'published';
+`;
+
 export function migrateDiaryDatabase(db: DiaryDatabase): void {
   db.pragma("foreign_keys = ON");
   const version = db.pragma("user_version", { simple: true }) as number;
@@ -172,6 +178,13 @@ export function migrateDiaryDatabase(db: DiaryDatabase): void {
     db.transaction(() => {
       db.exec(migration009);
       db.pragma("user_version = 9");
+    })();
+  }
+
+  if (version < 10) {
+    db.transaction(() => {
+      db.exec(migration010);
+      db.pragma("user_version = 10");
     })();
   }
 }

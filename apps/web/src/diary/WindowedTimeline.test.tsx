@@ -64,8 +64,28 @@ function entry(day: number): Entry {
   };
 }
 
+function denseEntry(index: number): Entry {
+  const minute = Math.floor(index / 60);
+  const second = index % 60;
+  const timestamp = `2020-07-20T10:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}.000+08:00`;
+  return {
+    ...entry(19),
+    id: `dense-${String(index).padStart(4, "0")}`,
+    title: `Dense ${index}`,
+    markdown: `Dense body ${index}`,
+    publishedAt: timestamp,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
+
 function dayIds(): string[] {
   return [...document.querySelectorAll<HTMLElement>("section[data-day]")].map((node) => node.id);
+}
+
+function entryIds(): string[] {
+  return [...document.querySelectorAll<HTMLElement>("article.entry")]
+    .map((node) => node.dataset.entryId!);
 }
 
 function setScrollY(next: number): void {
@@ -114,6 +134,7 @@ describe("WindowedTimeline", () => {
 
   afterEach(() => {
     cleanup();
+    document.documentElement.style.scrollBehavior = "";
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
@@ -124,6 +145,30 @@ describe("WindowedTimeline", () => {
     expect(screen.getByTestId("day-2020-07-16")).toBeInTheDocument();
     expect(document.querySelectorAll("article.entry")).toHaveLength(15);
     expect(document.querySelector("#day-2020-07-01")).not.toBeInTheDocument();
+  });
+
+  it("bounds a dense single-day window and traverses cached entries without duplicate sections", () => {
+    const onNeedOlder = vi.fn();
+    const entries = Array.from({ length: 300 }, (_, index) => denseEntry(index));
+    render(
+      <WindowedTimeline
+        entries={entries}
+        activeDay="2020-07-20"
+        onNeedOlder={onNeedOlder}
+      />,
+    );
+    const initialIds = [...document.querySelectorAll<HTMLElement>("article.entry")]
+      .map((node) => node.dataset.entryId);
+    expect(initialIds.length).toBeLessThan(250);
+    expect(document.querySelectorAll("#day-2020-07-20")).toHaveLength(1);
+
+    setScrollY(100);
+    const nextIds = [...document.querySelectorAll<HTMLElement>("article.entry")]
+      .map((node) => node.dataset.entryId);
+    expect(nextIds).not.toEqual(initialIds);
+    expect(new Set(nextIds).size).toBe(nextIds.length);
+    expect(document.querySelectorAll("#day-2020-07-20")).toHaveLength(1);
+    expect(onNeedOlder).not.toHaveBeenCalled();
   });
 
   it("keeps sentinels adjacent to the rendered window, between the spacers", () => {
@@ -182,6 +227,62 @@ describe("WindowedTimeline", () => {
     expect(onActiveDayChange).toHaveBeenCalled();
   });
 
+  it("replays exact entry boundaries twice after a non-aligned window is prepended and cache-trimmed", () => {
+    scrollPosition = 10_000;
+    const onNeedNewer = vi.fn();
+    const initialEntries = Array.from({ length: 360 }, (_, day) => entry(day));
+    const activeDay = entry(320).publishedAt!.slice(0, 10);
+    const { rerender } = render(
+      <WindowedTimeline
+        entries={initialEntries}
+        activeDay={activeDay}
+        onNeedNewer={onNeedNewer}
+      />,
+    );
+    const original = entryIds();
+    expect(original[0]).toBe("entry-327");
+
+    for (let transition = 0; transition < 10 && !onNeedNewer.mock.calls.length; transition += 1) {
+      setScrollY(scrollPosition - 100);
+      sentinelPositions.top = 2000;
+      setScrollY(scrollPosition - 1);
+      sentinelPositions.top = 100;
+    }
+    expect(onNeedNewer).toHaveBeenCalledTimes(1);
+
+    // A newer 120-entry page is prepended while the oldest 120 cached entries
+    // are trimmed, keeping the cache at 360 entries.
+    rerender(
+      <WindowedTimeline
+        entries={Array.from({ length: 360 }, (_, offset) => entry(offset + 120))}
+        activeDay={activeDay}
+        onNeedNewer={onNeedNewer}
+      />,
+    );
+
+    const returnToOriginal = () => {
+      const starts: string[] = [];
+      for (let transition = 0; transition < 30; transition += 1) {
+        if (entryIds().join("|") === original.join("|")) return true;
+        starts.push(entryIds()[0]!);
+        setScrollY(scrollPosition + 100);
+        sentinelPositions.bottom = 2000;
+        setScrollY(scrollPosition + 1);
+        sentinelPositions.bottom = 100;
+      }
+      return entryIds().join("|") === original.join("|");
+    };
+    expect(returnToOriginal()).toBe(true);
+
+    for (let transition = 0; transition < 30 && entryIds()[0] !== "entry-479"; transition += 1) {
+      setScrollY(scrollPosition - 100);
+      sentinelPositions.top = 2000;
+      setScrollY(scrollPosition - 1);
+      sentinelPositions.top = 100;
+    }
+    expect(returnToOriginal()).toBe(true);
+  });
+
   it("moves into a page that arrives while its loaded-edge sentinel stays intersecting", () => {
     const onNeedOlder = vi.fn();
     const firstPage = Array.from({ length: 15 }, (_, day) => entry(day + 15));
@@ -202,6 +303,48 @@ describe("WindowedTimeline", () => {
     expect(dayIds()).not.toEqual(original);
     expect(dayIds()[0]).toBe("day-2020-07-23");
     expect(onNeedOlder).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves an old visible anchor when a newer loaded-edge page is prepended", () => {
+    scrollPosition = 200;
+    const onNeedNewer = vi.fn();
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function rect(this: HTMLElement) {
+      if (this.dataset.testid?.endsWith("window-sentinel")) {
+        return { x: 0, y: 100, top: 100, left: 0, right: 1, bottom: 101, width: 1, height: 1, toJSON: () => ({}) } as DOMRect;
+      }
+      const index = [...document.querySelectorAll("article.entry")].indexOf(this as HTMLElement);
+      const top = index < 0 ? 2000 : 50 + index * 100;
+      return { x: 0, y: top, top, left: 0, right: 100, bottom: top + 90, width: 100, height: 90, toJSON: () => ({}) } as DOMRect;
+    });
+    const firstPage = Array.from({ length: 15 }, (_, day) => entry(day));
+    const { rerender } = render(
+      <WindowedTimeline entries={firstPage} activeDay="2020-07-08" onNeedNewer={onNeedNewer} />,
+    );
+    setScrollY(100);
+    expect(onNeedNewer).toHaveBeenCalledTimes(1);
+    vi.mocked(window.scrollBy).mockClear();
+    document.documentElement.style.scrollBehavior = "smooth";
+    let behaviorAtScroll = "";
+    vi.mocked(window.scrollBy).mockImplementation((_x, delta) => {
+      behaviorAtScroll = document.documentElement.style.scrollBehavior;
+      scrollPosition += Number(delta);
+      window.dispatchEvent(new Event("scroll"));
+    });
+
+    rerender(
+      <WindowedTimeline
+        entries={Array.from({ length: 30 }, (_, day) => entry(day))}
+        activeDay="2020-07-08"
+        onNeedNewer={onNeedNewer}
+      />,
+    );
+
+    expect(window.scrollBy).toHaveBeenCalled();
+    expect(behaviorAtScroll).toBe("auto");
+    expect(document.documentElement.style.scrollBehavior).toBe("auto");
+    act(() => vi.runAllTimers());
+    expect(document.documentElement.style.scrollBehavior).toBe("smooth");
+    expect(onNeedNewer).toHaveBeenCalledTimes(1);
   });
 
   it("does not cascade into a page fetch when a clamped shift leaves scroll events near the same boundary", () => {
@@ -263,22 +406,48 @@ describe("WindowedTimeline", () => {
       if (this.dataset.testid?.endsWith("window-sentinel")) {
         return { x: 0, y: 100, top: 100, left: 0, right: 1, bottom: 101, width: 1, height: 1, toJSON: () => ({}) } as DOMRect;
       }
-      const index = [...document.querySelectorAll("section[data-day]")].indexOf(this as HTMLElement);
+      const index = [...document.querySelectorAll("article.entry")].indexOf(this as HTMLElement);
       const top = index < 0 ? 2000 : (index - 7) * 100 + moved;
       return { x: 0, y: top, top, left: 0, right: 100, bottom: top + 90, width: 100, height: 90, toJSON: () => ({}) } as DOMRect;
     });
     const entries = Array.from({ length: 55 }, (_, day) => entry(day));
     render(<WindowedTimeline entries={entries} activeDay="2020-07-20" />);
-    const firstDay = document.querySelector<HTMLElement>("section[data-day]")!;
-    resize(firstDay, 826);
+    const firstEntry = document.querySelector<HTMLElement>("article.entry")!;
+    resize(firstEntry, 826);
     vi.mocked(window.scrollBy).mockClear();
     moved = 48;
-    resize(firstDay, 900);
+    resize(firstEntry, 900);
     expect(window.scrollBy).toHaveBeenCalledWith(0, 48);
+    act(() => vi.runAllTimers());
 
     // Moving the window now omits the measured day; the spacer uses its latest
     // measured height instead of the never-mounted-day fallback.
     setScrollY(100);
-    expect(screen.getByTestId("top-window-spacer").style.height).toBe("7020px");
+    expect(screen.getByTestId("top-window-spacer").style.height).toBe("7090px");
+  });
+
+  it("preserves a visible entry when an earlier entry body or image changes height", () => {
+    let moved = 0;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function rect(this: HTMLElement) {
+      if (this.dataset.testid?.endsWith("window-sentinel")) {
+        return { x: 0, y: 100, top: 100, left: 0, right: 1, bottom: 101, width: 1, height: 1, toJSON: () => ({}) } as DOMRect;
+      }
+      const index = [...document.querySelectorAll("article.entry")].indexOf(this as HTMLElement);
+      const top = index < 0 ? 2000 : (index - 7) * 100 + moved;
+      return { x: 0, y: top, top, left: 0, right: 100, bottom: top + 90, width: 100, height: 90, toJSON: () => ({}) } as DOMRect;
+    });
+    render(
+      <WindowedTimeline
+        entries={Array.from({ length: 30 }, (_, day) => entry(day))}
+        activeDay="2020-07-16"
+      />,
+    );
+    const preceding = document.querySelector<HTMLElement>("article.entry")!;
+    resize(preceding, 110);
+    vi.mocked(window.scrollBy).mockClear();
+    moved = 64;
+    resize(preceding, 174);
+
+    expect(window.scrollBy).toHaveBeenCalledWith(0, 64);
   });
 });

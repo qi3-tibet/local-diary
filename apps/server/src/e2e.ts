@@ -72,16 +72,27 @@ server.post<{ Body: { corrupt?: boolean } }>("/__e2e__/music-fixture", async (re
   }
 });
 
-server.post<{ Headers: { "x-diary-e2e-token"?: string } }>("/__e2e__/large-fixture", async (request, reply) => {
+server.post<{
+  Body: { mode?: "mixed" | "dense" };
+  Headers: { "x-diary-e2e-token"?: string };
+}>("/__e2e__/large-fixture", async (request, reply) => {
   if (process.env.NODE_ENV !== "test" || request.headers["x-diary-e2e-token"] !== process.env.DIARY_E2E_TOKEN) {
     return reply.code(404).send();
   }
   const database = createDiaryDatabase(dataRoot);
   try {
-    if ((database.prepare("SELECT COUNT(*) AS count FROM entries").get() as { count: number }).count < 20_000) {
-      seedLargeDiaryInto(database, 20_000, 5_000);
+    const mode = request.body?.mode ?? "mixed";
+    const range = mode === "dense"
+      ? ["2040-07-26T00:00:00.000+08:00", "2040-07-27T00:00:00.000+08:00"] as const
+      : ["2020-07-26T00:00:00.000+08:00", "2034-04-04T00:00:00.000+08:00"] as const;
+    const count = (database.prepare(
+      "SELECT COUNT(*) AS count FROM entries WHERE published_at >= ? AND published_at < ?",
+    ).get(...range) as { count: number }).count;
+    if (count < 20_000) {
+      if (mode === "dense") seedLargeDiaryInto(database, 20_000, 1, true, "2040-07-26");
+      else seedLargeDiaryInto(database, 20_000, 5_000);
     }
-    return { count: 20_000 };
+    return { count: 20_000, mode };
   } finally {
     database.close();
   }

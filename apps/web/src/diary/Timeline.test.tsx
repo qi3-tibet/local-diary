@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import type { Entry } from "@diary/contracts";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DateRail } from "./DateRail";
 import { Timeline } from "./Timeline";
@@ -161,11 +161,14 @@ describe("Timeline", () => {
 
 describe("DateRail", () => {
   it("links each Beijing day and identifies the active day", () => {
-    render(<DateRail entries={entriesForTwoDays} activeDay="2026-07-25" />);
+    const onJumpDay = vi.fn();
+    render(<DateRail entries={entriesForTwoDays} activeDay="2026-07-25" onJumpDay={onJumpDay} />);
 
     const activeLink = screen.getByRole("link", { name: "July 25, 2026" });
     expect(activeLink).toHaveAttribute("href", "#day-2026-07-25");
     expect(activeLink).toHaveAttribute("aria-current", "date");
     expect(screen.getAllByRole("link")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("link", { name: "July 26, 2026" }));
+    expect(onJumpDay).toHaveBeenCalledWith("2026-07-26");
   });
 });

@@ -26,7 +26,9 @@ export function groupEntriesByBeijingDay(entries: Entry[]): DayGroup[] {
       (entry): entry is Entry & { publishedAt: string } =>
         entry.state === "published" && entry.publishedAt !== null,
     )
-    .sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
+    .sort((left, right) =>
+      right.publishedAt.localeCompare(left.publishedAt) || right.id.localeCompare(left.id),
+    );
   const grouped = new Map<string, Entry[]>();
 
   for (const entry of published) {

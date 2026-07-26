@@ -2,7 +2,12 @@ import type { Entry } from "@diary/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
-import { api, type DayPage } from "../api/client";
+import { api } from "../api/client";
+import {
+  createDayPageCache,
+  mergeDayPages,
+  type DayPageCache,
+} from "./day-page-cache";
 import { DateRail } from "../diary/DateRail";
 import { WindowedTimeline } from "../diary/WindowedTimeline";
 import { groupEntriesByBeijingDay } from "../diary/date-groups";
@@ -17,6 +22,10 @@ import { BackupSettings } from "../settings/BackupSettings";
 import { RestoreProgress, type RestoreState } from "../settings/RestoreProgress";
 
 type View = "diary" | "editor" | "search" | "trash" | "settings";
+type JumpTarget = {
+  day: string;
+  entryId?: string;
+};
 
 export function App() {
   const [player] = useState(getBrowserPlayerStore);
@@ -27,7 +36,11 @@ export function App() {
   const [restoreState, setRestoreState] = useState<RestoreState>();
   const [backupWarning, setBackupWarning] = useState<string>();
   const checkedDraftRecovery = useRef(false);
-  const paging = useRef(false);
+  const handledRequestedDay = useRef(false);
+  const navigationGeneration = useRef(0);
+  const navigationLocked = useRef(false);
+  const pagingSequence = useRef(0);
+  const activePagingRequest = useRef<number | undefined>(undefined);
   const [themeSession] = useState(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     return {
@@ -47,16 +60,16 @@ export function App() {
     queryKey: ["draft"],
     queryFn: api.getDraft,
   });
-  const [dayPage, setDayPage] = useState<DayPage>();
+  const [dayPage, setDayPage] = useState<DayPageCache>();
   const entries = dayPage?.days.flatMap((group) => group.entries) ?? [];
   const days = useMemo(
     () => groupEntriesByBeijingDay(entries).map((group) => group.day),
     [entries],
   );
   const [activeDay, setActiveDay] = useState<string>();
-  const [jumpTarget, setJumpTarget] = useState<string>();
+  const [jumpTarget, setJumpTarget] = useState<JumpTarget>();
+  const [navigationReady, setNavigationReady] = useState(false);
   const [timelineNavigationKey, setTimelineNavigationKey] = useState(0);
-  const [pendingEntryFocus, setPendingEntryFocus] = useState<string>();
   const sortedDays = useMemo(() => [...days].sort(), [days]);
   const restoreLocked = restoreState
     ? ["SAFETY_BACKUP", "RESTORING", "REBUILDING"].includes(restoreState.phase)
@@ -68,8 +81,15 @@ export function App() {
   }, [resolvedTheme]);
 
   useEffect(() => {
-    if (entriesQuery.data) setDayPage(entriesQuery.data);
-  }, [entriesQuery.data]);
+    if (!entriesQuery.data) return;
+    if (requestedDay && !handledRequestedDay.current) {
+      handledRequestedDay.current = true;
+      beginNavigation({ day: requestedDay });
+      applyDayNavigation(requestedDay, entriesQuery.data);
+    } else {
+      setDayPage(createDayPageCache(entriesQuery.data));
+    }
+  }, [entriesQuery.data, requestedDay]);
 
   useEffect(() => {
     const syncSystem = () => themeSession.store.getState().syncSystem();
@@ -88,45 +108,58 @@ export function App() {
   }, [activeDay, player]);
 
   useEffect(() => {
-    if (!requestedDay || !entriesQuery.isSuccess) return;
-    window.requestAnimationFrame(() => {
-      document.getElementById(`day-${requestedDay}`)?.scrollIntoView({ block: "start", behavior: "auto" });
-    });
-  }, [entriesQuery.isSuccess, requestedDay]);
-
-  useEffect(() => {
-    if (!jumpTarget) return;
-    let frame = window.requestAnimationFrame(() => {
-      const section = document.getElementById(`day-${jumpTarget}`);
-      if (!section) return;
+    if (!jumpTarget || !navigationReady) return;
+    let restoreScrollBehavior: (() => void) | undefined;
+    let active = true;
+    let frame = 0;
+    const seekAndScroll = () => {
+      if (!active) return;
+      const target = jumpTarget.entryId
+        ? [...document.querySelectorAll<HTMLElement>("[data-entry-id]")]
+            .find((element) => element.dataset.entryId === jumpTarget.entryId)
+        : document.getElementById(`day-${jumpTarget.day}`);
+      if (!target) {
+        frame = window.requestAnimationFrame(seekAndScroll);
+        return;
+      }
       const root = document.documentElement;
       const scrollBehavior = root.style.scrollBehavior;
       root.style.scrollBehavior = "auto";
-      section.scrollIntoView({ block: "center", behavior: "auto" });
-      root.style.scrollBehavior = scrollBehavior;
-      section.focus({ preventScroll: true });
+      restoreScrollBehavior = () => {
+        root.style.scrollBehavior = scrollBehavior;
+        restoreScrollBehavior = undefined;
+      };
+      target.scrollIntoView({ block: "center", behavior: "auto" });
+      target.focus({ preventScroll: true });
       let previous = window.scrollY;
+      let previousTop = target.getBoundingClientRect().top;
       let stableFrames = 0;
       const finishWhenSettled = () => {
+        if (!active) return;
         const next = window.scrollY;
-        stableFrames = Math.abs(next - previous) < 0.5 ? stableFrames + 1 : 0;
+        const nextTop = target.getBoundingClientRect().top;
+        stableFrames = Math.abs(next - previous) < 0.5 && Math.abs(nextTop - previousTop) < 0.5
+          ? stableFrames + 1
+          : 0;
         previous = next;
-        if (stableFrames >= 4) setJumpTarget(undefined);
+        previousTop = nextTop;
+        if (stableFrames >= 4) {
+          restoreScrollBehavior?.();
+          navigationLocked.current = false;
+          setNavigationReady(false);
+          setJumpTarget(undefined);
+        }
         else frame = window.requestAnimationFrame(finishWhenSettled);
       };
       frame = window.requestAnimationFrame(finishWhenSettled);
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [dayPage, jumpTarget]);
-
-  useEffect(() => {
-    if (!pendingEntryFocus) return;
-    const entry = document.querySelector<HTMLElement>(`[data-entry-id="${pendingEntryFocus}"]`);
-    if (!entry) return;
-    entry.scrollIntoView({ block: "center", behavior: "auto" });
-    entry.focus({ preventScroll: true });
-    setPendingEntryFocus(undefined);
-  }, [dayPage, pendingEntryFocus]);
+    };
+    frame = window.requestAnimationFrame(seekAndScroll);
+    return () => {
+      active = false;
+      window.cancelAnimationFrame(frame);
+      restoreScrollBehavior?.();
+    };
+  }, [dayPage, jumpTarget, navigationReady]);
 
   useEffect(() => {
     if (!draftRecoveryQuery.isSuccess || checkedDraftRecovery.current) return;
@@ -213,54 +246,112 @@ export function App() {
       timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
     }).formatToParts(new Date(entry.publishedAt));
     const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
-    setPendingEntryFocus(entry.id);
-    await jumpToDay(`${value("year")}-${value("month")}-${value("day")}`);
-  }
-
-  function mergeDays(current: DayPage, incoming: DayPage, position: "older" | "newer"): DayPage {
-    const known = new Set(current.days.map((group) => group.day));
-    const additions = incoming.days.filter((group) => !known.has(group.day));
-    const combined = position === "older"
-      ? [...additions, ...current.days]
-      : [...current.days, ...additions];
-    return {
-      days: combined,
-      previousCursor: position === "newer" ? incoming.previousCursor : current.previousCursor,
-      nextCursor: position === "older" ? incoming.nextCursor : current.nextCursor,
-    };
+    const day = `${value("year")}-${value("month")}-${value("day")}`;
+    const generation = beginNavigation({ day, entryId: entry.id });
+    try {
+      const next = await api.listDayPage({ entryId: entry.id });
+      if (generation !== navigationGeneration.current) return;
+      applyDayNavigation(day, next, entry.id);
+    } catch {
+      failNavigation(generation, "THE ENTRY COULD NOT BE OPENED");
+    }
   }
 
   async function loadOlder(): Promise<void> {
-    if (!dayPage?.nextCursor || paging.current) return;
-    paging.current = true;
+    if (
+      navigationLocked.current
+      || !dayPage?.nextCursor
+      || activePagingRequest.current !== undefined
+    ) return;
+    const generation = navigationGeneration.current;
+    const requestId = ++pagingSequence.current;
+    activePagingRequest.current = requestId;
     try {
       const next = await api.listDayPage({ cursor: dayPage.nextCursor, direction: "older" });
-      setDayPage((current) => current ? mergeDays(current, next, "older") : next);
+      if (
+        generation !== navigationGeneration.current
+        || activePagingRequest.current !== requestId
+      ) return;
+      setDayPage((current) => current
+        ? mergeDayPages(current, next, "older")
+        : createDayPageCache(next));
     } catch {
-      await entriesQuery.refetch();
+      if (generation === navigationGeneration.current) await entriesQuery.refetch();
     } finally {
-      paging.current = false;
+      if (activePagingRequest.current === requestId) activePagingRequest.current = undefined;
     }
   }
 
   async function loadNewer(): Promise<void> {
-    if (!dayPage?.previousCursor || paging.current) return;
-    paging.current = true;
+    if (
+      navigationLocked.current
+      || !dayPage?.previousCursor
+      || activePagingRequest.current !== undefined
+    ) return;
+    const generation = navigationGeneration.current;
+    const requestId = ++pagingSequence.current;
+    activePagingRequest.current = requestId;
     try {
       const next = await api.listDayPage({ cursor: dayPage.previousCursor, direction: "newer" });
-      setDayPage((current) => current ? mergeDays(current, next, "newer") : next);
+      if (
+        generation !== navigationGeneration.current
+        || activePagingRequest.current !== requestId
+      ) return;
+      setDayPage((current) => current
+        ? mergeDayPages(current, next, "newer")
+        : createDayPageCache(next));
     } catch {
-      await entriesQuery.refetch();
+      if (generation === navigationGeneration.current) await entriesQuery.refetch();
     } finally {
-      paging.current = false;
+      if (activePagingRequest.current === requestId) activePagingRequest.current = undefined;
     }
   }
 
   async function jumpToDay(day: string): Promise<void> {
-    const next = await api.listDayPage({ day });
-    setJumpTarget(day);
-    setDayPage(next);
-    setActiveDay(day);
+    const generation = beginNavigation({ day });
+    try {
+      const next = await api.listDayPage({ day });
+      if (generation !== navigationGeneration.current) return;
+      applyDayNavigation(day, next);
+    } catch {
+      failNavigation(generation, "THE DATE COULD NOT BE OPENED");
+    }
+  }
+
+  function beginNavigation(target: JumpTarget): number {
+    navigationGeneration.current += 1;
+    navigationLocked.current = true;
+    activePagingRequest.current = undefined;
+    setManagementError(undefined);
+    setNavigationReady(false);
+    setJumpTarget(target);
+    return navigationGeneration.current;
+  }
+
+  function failNavigation(generation: number, message: string): void {
+    if (generation !== navigationGeneration.current) return;
+    navigationLocked.current = false;
+    setNavigationReady(false);
+    setJumpTarget(undefined);
+    setManagementError(message);
+  }
+
+  function applyDayNavigation(
+    day: string,
+    next: Awaited<ReturnType<typeof api.listDayPage>>,
+    entryId?: string,
+  ): void {
+    const targetDay = nearestReturnedDay(day, next.days.map((group) => group.day));
+    const containsEntry = entryId
+      ? next.days.some((group) => group.entries.some((entry) => entry.id === entryId))
+      : false;
+    setJumpTarget(targetDay
+      ? { day: targetDay, entryId: containsEntry ? entryId : undefined }
+      : undefined);
+    setNavigationReady(Boolean(targetDay));
+    if (!targetDay) navigationLocked.current = false;
+    setDayPage(createDayPageCache(next));
+    setActiveDay(targetDay);
     setTimelineNavigationKey((value) => value + 1);
   }
 
@@ -283,12 +374,6 @@ export function App() {
     );
   } else if (view === "trash") {
     content = <TrashPanel onRestore={restoreEntry} />;
-  } else if (entriesQuery.isPending) {
-    content = (
-      <p className="reading-status" role="status">
-        OPENING DIARY
-      </p>
-    );
   } else if (entriesQuery.isError) {
     content = (
       <div className="reading-status" role="alert">
@@ -298,11 +383,18 @@ export function App() {
         </button>
       </div>
     );
+  } else if (entriesQuery.isPending || !dayPage) {
+    content = (
+      <p className="reading-status" role="status">
+        OPENING DIARY
+      </p>
+    );
   } else {
     content = (
       <WindowedTimeline
         entries={entries}
         activeDay={activeDay}
+        totalEntriesByDay={Object.fromEntries(dayPage?.days.map((group) => [group.day, group.totalEntries]) ?? [])}
         preserveAnchor={!jumpTarget}
         pagingEnabled={!jumpTarget}
         navigationResetKey={timelineNavigationKey}
@@ -382,4 +474,14 @@ export function App() {
       <FloatingPlayer player={player} />
     </div>
   );
+}
+
+function nearestReturnedDay(requestedDay: string, returnedDays: string[]): string | undefined {
+  if (returnedDays.includes(requestedDay)) return requestedDay;
+  const requestedTime = Date.parse(`${requestedDay}T00:00:00.000Z`);
+  return [...returnedDays].sort((left, right) => {
+    const distance = Math.abs(Date.parse(`${left}T00:00:00.000Z`) - requestedTime)
+      - Math.abs(Date.parse(`${right}T00:00:00.000Z`) - requestedTime);
+    return distance || right.localeCompare(left);
+  })[0];
 }
