@@ -8,12 +8,15 @@ import { exportArchive } from "../src/backup/archive.js";
 import { restoreArchive } from "../src/backup/restore.js";
 import { createDiaryDatabase, type DiaryDatabase } from "../src/db/client.js";
 import { MediaStore } from "../src/media/store.js";
+import { buildServer } from "../src/app.js";
 
 describe("complete archive restore", () => {
   const roots: string[] = [];
   const databases: DiaryDatabase[] = [];
-  afterEach(() => {
-    databases.splice(0).forEach((database) => database.close());
+  const servers: ReturnType<typeof buildServer>[] = [];
+  afterEach(async () => {
+    await Promise.all(servers.splice(0).map((server) => server.close()));
+    databases.splice(0).forEach((database) => { try { database.close(); } catch {} });
     roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true }));
   });
 
@@ -87,6 +90,26 @@ describe("complete archive restore", () => {
       reopen: async () => { events.push("REOPEN"); },
     } });
     expect(events).toEqual(["BARRIER", "SAFETY", "QUIESCE", "REBUILD", "REOPEN", "RESUME"]);
+  });
+
+  it("restores a normal server route and all request-time services use restored data", async () => {
+    const dataRoot = temp("archive-app-"); const backupRoot = temp("archive-app-backup-");
+    const database = createDiaryDatabase(dataRoot); databases.push(database);
+    const server = buildServer({ dataRoot, backupRoot, database }); servers.push(server);
+    const draft = await server.inject({ method: "PUT", url: "/api/v1/draft", payload: { title: "Archived title", markdown: "archived searchable body", tags: ["kept"] } });
+    await server.inject({ method: "POST", url: "/api/v1/draft/publish" });
+    const snapshots = new SnapshotService({ dataRoot, backupRoot, database });
+    const snapshot = await snapshots.create("2026-07-26"); const archive = join(temp("archive-output-"), "archive.zip");
+    await exportArchive(snapshot.id, snapshots, archive);
+    await server.inject({ method: "PATCH", url: `/api/v1/entries/${JSON.parse((await server.inject({ method: "GET", url: "/api/v1/entries" })).body)[0].id}`, payload: { title: "Changed", markdown: "changed", tags: [] } });
+    const boundary = "restore-test-boundary"; const bytes = await readFile(archive);
+    const body = Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="archive"; filename="archive.zip"\r\nContent-Type: application/zip\r\n\r\n`), bytes, Buffer.from(`\r\n--${boundary}--\r\n`)]);
+    const restored = await server.inject({ method: "POST", url: "/api/v1/backups/restore", headers: { "content-type": `multipart/form-data; boundary=${boundary}` }, payload: body });
+    expect(restored.body).toContain("DONE");
+    expect(JSON.parse((await server.inject({ method: "GET", url: "/api/v1/entries" })).body)[0].markdown).toBe("archived searchable body");
+    expect(JSON.parse((await server.inject({ method: "GET", url: "/api/v1/search?q=kept" })).body).items).toHaveLength(1);
+    const next = await server.inject({ method: "PUT", url: "/api/v1/draft", payload: { title: "After", markdown: "after restore", tags: [] } });
+    expect(next.statusCode).toBe(200);
   });
 
   function temp(prefix: string): string {
