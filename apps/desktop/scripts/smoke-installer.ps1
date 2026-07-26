@@ -126,6 +126,13 @@ try {
     }
   }
 
+  $allInstalledShortcutsOwned = (
+    $ownedInstallRoot -and
+    (Test-AllExistingShortcutsOwned $links $installedApp)
+  )
+  if (-not $allInstalledShortcutsOwned) {
+    throw "Shortcut ownership changed before uninstall; preserving the installation."
+  }
   $uninstallProcess = Start-Process -FilePath $uninstaller -ArgumentList "/S" -PassThru -Wait -WindowStyle Hidden
   if ($uninstallProcess.ExitCode -ne 0) {
     throw "Uninstaller returned exit code $($uninstallProcess.ExitCode)."

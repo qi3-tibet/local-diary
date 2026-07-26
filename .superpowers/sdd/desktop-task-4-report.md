@@ -50,6 +50,7 @@ An independent final review found four further Important release-verification ga
 4. The installer smoke checked existence for all four shortcuts but parsed only three. It now parses and reports all four, requiring empty ordinary arguments and exactly `--browser` for both browser shortcuts.
 5. The release guide now distinguishes desktop-owned shutdown from a secondary desktop window opened by a browser-owned process.
 6. Internal re-review found that failure cleanup still invoked the NSIS uninstaller before manual shortcut ownership checks, allowing the uninstaller itself to delete a replaced link. Failure cleanup now runs the uninstaller only after the install root is known to be smoke-owned and every existing shortcut reparses as an exact target-and-arguments match; otherwise it preserves the installation and warns, while manual cleanup removes only provably owned links.
+7. Independent re-review found the normal success path still relied on its earlier shortcut parse before invoking NSIS. The success path now repeats the complete install-root and four-link ownership preflight immediately before normal uninstall; any changed or unparseable link aborts uninstall and is preserved.
 
 ## Final artifacts
 

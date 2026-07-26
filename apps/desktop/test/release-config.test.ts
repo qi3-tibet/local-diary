@@ -86,6 +86,10 @@ describe("Windows release configuration", () => {
     expect(smoke).toContain("does not own shortcut; preserving");
     expect(smoke).toContain("Test-AllExistingShortcutsOwned");
     expect(smoke).toContain("skipping best-effort uninstall");
+    const normalUninstall = smoke.indexOf("$uninstallProcess = Start-Process -FilePath $uninstaller");
+    expect(normalUninstall).toBeGreaterThan(0);
+    expect(smoke.lastIndexOf("$allInstalledShortcutsOwned", normalUninstall))
+      .toBeGreaterThan(smoke.indexOf("$startMenuBrowserShortcut = Get-ShortcutDetails"));
     const finallyBlock = smoke.slice(smoke.indexOf("} finally {"));
     expect(finallyBlock.indexOf("$allExistingShortcutsOwned"))
       .toBeLessThan(finallyBlock.indexOf("Start-Process -FilePath $uninstaller"));
