@@ -107,7 +107,10 @@ function Start-Diary([string[]]$Arguments) {
 
 $active = $null
 try {
-  $commonArguments = @("--user-data-dir=$resolvedUserData")
+  # Start-Process joins ArgumentList items into one command line. Quote the
+  # value explicitly so workspace paths containing spaces remain one Electron
+  # switch instead of being truncated at the first space.
+  $commonArguments = @("--user-data-dir=`"$resolvedUserData`"")
   $active = Start-Diary $commonArguments
   $first = Wait-ForHealth $active
   if ($first.ListenerCount -ne 1) {

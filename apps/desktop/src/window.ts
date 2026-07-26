@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url";
+
 export type WindowRuntime = {
   BrowserWindow: new (options: {
     width: number;
@@ -9,6 +11,7 @@ export type WindowRuntime = {
       contextIsolation: true;
       sandbox: true;
       nodeIntegration: false;
+      preload: string;
     };
   }) => {
     loadURL(url: string): Promise<void>;
@@ -37,6 +40,7 @@ export async function createDiaryWindow(localUrl: string, runtime?: WindowRuntim
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
+      preload: resolvePreloadPath(),
     },
   });
   const handleTarget = (target: string): "local" | "external" | "reject" => {
@@ -64,4 +68,8 @@ export async function createDiaryWindow(localUrl: string, runtime?: WindowRuntim
   await window.loadURL(localUrl);
   window.show();
   return window;
+}
+
+export function resolvePreloadPath(moduleUrl = import.meta.url): string {
+  return fileURLToPath(new URL("./preload.cjs", moduleUrl));
 }

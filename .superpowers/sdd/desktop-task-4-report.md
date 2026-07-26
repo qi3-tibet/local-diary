@@ -55,11 +55,13 @@ An independent final review found four further Important release-verification ga
 ## Final artifacts
 
 Generated artifacts are intentionally ignored by git and remain under `apps/desktop/release/`.
+The hashes below were refreshed by final integration hardening; its complete
+post-change verification is recorded in `final-integration-hardening-report.md`.
 
 - Installer: `apps/desktop/release/Local-Diary-Setup-0.1.0-x64.exe`
-  - SHA-256: `d863c2dbcde35e34e5c563fb833feeb508a2bb7b57efe6632d3d4f7624e60779`
+  - SHA-256: `3051d78f64cca586fea2d38a84f21cf78868ff5bec18daaf280f281864567d3d`
 - Blockmap: `apps/desktop/release/Local-Diary-Setup-0.1.0-x64.exe.blockmap`
-  - SHA-256: `011ab1e41908ee0c303453219af89406a7538054d692184f8312514acb7cc326`
+  - SHA-256: `41429db0ec66a556ee0f0be996165cb59200692d1a4240fa216be16f64df1980`
 - Unpacked app: `apps/desktop/release/win-unpacked/Local Diary.exe`
 - Checksum file: `apps/desktop/release/checksums.sha256`
 

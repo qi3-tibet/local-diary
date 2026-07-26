@@ -6,10 +6,9 @@ import { pipeline } from "node:stream/promises";
 import { PassThrough } from "node:stream";
 import { randomUUID } from "node:crypto";
 import type { SnapshotService } from "./snapshot.js";
-import { exportArchive } from "./archive.js";
+import { MAX_ARCHIVE_TRANSPORT_BYTES, exportArchive } from "./archive.js";
 import { restoreArchive, type RestoreContext } from "./restore.js";
 
-const ARCHIVE_UPLOAD_LIMIT = 2 * 1024 * 1024 * 1024;
 const ZIP_MIME_TYPES = new Set([
   "application/zip",
   "application/x-zip-compressed",
@@ -20,6 +19,7 @@ export function registerBackupRoutes(server: FastifyInstance, options: {
   snapshots: () => SnapshotService;
   temporaryRoot: string;
   restoreContext?: () => RestoreContext | null;
+  restoreUploadLimit?: number;
 }): void {
   server.get("/api/v1/backups/:snapshotId/archive", async (request, reply) => {
     const snapshotId = (request.params as { snapshotId: string }).snapshotId;
@@ -41,7 +41,12 @@ export function registerBackupRoutes(server: FastifyInstance, options: {
   server.post("/api/v1/backups/restore", async (request, reply) => {
     const context = options.restoreContext?.();
     if (!context) return reply.code(409).send({ error: "RESTORE_CONTEXT_REQUIRED" });
-    const upload = await request.file({ limits: { files: 1, fileSize: ARCHIVE_UPLOAD_LIMIT } });
+    const upload = await request.file({
+      limits: {
+        files: 1,
+        fileSize: options.restoreUploadLimit ?? MAX_ARCHIVE_TRANSPORT_BYTES,
+      },
+    });
     if (
       !upload
       || !upload.filename.toLowerCase().endsWith(".zip")

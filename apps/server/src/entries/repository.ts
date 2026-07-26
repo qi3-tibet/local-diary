@@ -38,6 +38,12 @@ type EntryBoundary = {
   id: string;
 };
 
+export type MediaObjectReference = { hash: string; extension: string };
+export type PurgedTrash = {
+  purgedEntries: number;
+  objects: MediaObjectReference[];
+};
+
 const PROCESS_CURSOR_KEY = randomBytes(32);
 
 export class EntryRepository {
@@ -172,20 +178,103 @@ export class EntryRepository {
   }
 
   purgeTrashedBefore(cutoff: string): number {
+    return this.purgeTrashedBeforeWithMedia(cutoff).purgedEntries;
+  }
+
+  purgeTrashedBeforeWithMedia(cutoff: string): PurgedTrash {
     const purge = this.db.transaction(() => {
       const ids = this.db.prepare(`
         SELECT id FROM entries
         WHERE state = 'trashed' AND deleted_at <= ?
       `).all(cutoff) as Array<{ id: string }>;
-      if (!ids.length) return 0;
+      if (!ids.length) return { purgedEntries: 0, objects: [] };
+
+      const media = this.db.prepare(`
+        SELECT original_hash, original_extension, display_hash, thumbnail_hash
+        FROM media
+        WHERE entry_id IN (
+          SELECT id FROM entries
+          WHERE state = 'trashed' AND deleted_at <= ?
+        )
+      `).all(cutoff) as Array<{
+        original_hash: string;
+        original_extension: string;
+        display_hash: string | null;
+        thumbnail_hash: string | null;
+      }>;
+      const objects = new Map<string, MediaObjectReference>();
+      for (const row of media) {
+        const references = [
+          { hash: row.original_hash, extension: row.original_extension },
+          ...(row.display_hash ? [{ hash: row.display_hash, extension: "webp" }] : []),
+          ...(row.thumbnail_hash ? [{ hash: row.thumbnail_hash, extension: "webp" }] : []),
+        ];
+        for (const reference of references) {
+          if (
+            !/^[a-f0-9]{64}$/.test(reference.hash)
+            || !/^[a-z0-9]+$/.test(reference.extension)
+          ) {
+            throw new Error("TRASH_CLEANUP_MEDIA_INVALID");
+          }
+          objects.set(`${reference.hash}.${reference.extension}`, reference);
+        }
+      }
+
+      const queueObject = this.db.prepare(`
+        INSERT INTO trash_cleanup_objects (hash, extension, queued_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(hash, extension) DO NOTHING
+      `);
+      const queuedAt = new Date().toISOString();
+      for (const object of objects.values()) {
+        queueObject.run(object.hash, object.extension, queuedAt);
+      }
 
       const removeFromSearch = this.db.prepare("DELETE FROM entry_search WHERE entry_id = ?");
       for (const { id } of ids) removeFromSearch.run(id);
-      return this.db.prepare(`
+      const purgedEntries = this.db.prepare(`
         DELETE FROM entries WHERE state = 'trashed' AND deleted_at <= ?
       `).run(cutoff).changes;
+      return { purgedEntries, objects: [...objects.values()] };
     });
     return purge();
+  }
+
+  isMediaObjectReferenced(reference: MediaObjectReference): boolean {
+    const derivative = reference.extension === "webp" ? reference.hash : null;
+    return Boolean(this.db.prepare(`
+      SELECT 1 FROM media
+      WHERE (original_hash = ? AND original_extension = ?)
+        OR (? IS NOT NULL AND (display_hash = ? OR thumbnail_hash = ?))
+      LIMIT 1
+    `).get(
+      reference.hash,
+      reference.extension,
+      derivative,
+      derivative,
+      derivative,
+    ));
+  }
+
+  listPendingMediaObjectCleanup(): MediaObjectReference[] {
+    const rows = this.db.prepare(`
+      SELECT hash, extension
+      FROM trash_cleanup_objects
+      ORDER BY queued_at, hash, extension
+    `).all() as MediaObjectReference[];
+    if (rows.some(
+      ({ hash, extension }) =>
+        !/^[a-f0-9]{64}$/.test(hash) || !/^[a-z0-9]+$/.test(extension),
+    )) {
+      throw new Error("TRASH_CLEANUP_PENDING_INVALID");
+    }
+    return rows;
+  }
+
+  completeMediaObjectCleanup(reference: MediaObjectReference): void {
+    this.db.prepare(`
+      DELETE FROM trash_cleanup_objects WHERE hash = ? AND extension = ?
+    `).run(reference.hash, reference.extension);
   }
 
   searchPublished(query: string, limit = 100): Entry[] {
@@ -603,7 +692,7 @@ function decodeEntryCursor(value: string, expectedDirection: "older" | "newer", 
 
 function isPublishedTimestamp(value: unknown): value is string {
   if (typeof value !== "string") return false;
-  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})(Z|[+-]\d{2}:\d{2})$/.exec(value);
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?(Z|[+-]\d{2}:\d{2})$/.exec(value);
   if (!match || !isCalendarDay(match[1])) return false;
   const hour = Number(match[2]);
   const minute = Number(match[3]);

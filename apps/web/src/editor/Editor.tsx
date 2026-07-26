@@ -69,6 +69,7 @@ function EditorForm({
   const pendingInputRange = useRef<TextRange | null>(null);
   const pendingUpload = useRef<Promise<void> | null>(null);
   const pendingMusic = useRef<Promise<void> | null>(null);
+  const draftChanged = useRef(false);
   const isDraft = !entry;
 
   const draftPersistence = useSilentDraft(value, api.saveDraft, isDraft && !submitting);
@@ -102,6 +103,7 @@ function EditorForm({
         markdown,
       );
       const nextValue = { ...latestValue.current, markdown: insertion.value };
+      draftChanged.current = true;
       latestValue.current = nextValue;
       setValue(nextValue);
       uploadAnchor.current = null;
@@ -167,6 +169,7 @@ function EditorForm({
         ?? (await api.saveDraft(latestValue.current)).id;
       uploadEntryId.current = entryId;
       const attached = await api.uploadMusic(entryId, file);
+      draftChanged.current = true;
       const withFilename = {
         ...attached,
         originalFilename: attached.originalFilename ?? file.name,
@@ -189,6 +192,7 @@ function EditorForm({
       const entryId = uploadEntryId.current;
       if (!entryId) return;
       const updated = await api.patchMusicMetadata(entryId, overrides);
+      draftChanged.current = true;
       setMusic((current) => current ? { ...current, ...updated } : updated);
       setMusicCandidates(updated.candidates ?? []);
     }).catch(() => {
@@ -201,6 +205,7 @@ function EditorForm({
       const entryId = uploadEntryId.current;
       if (!entryId) return;
       const updated = await api.selectMusicCandidate(entryId, candidateId);
+      draftChanged.current = true;
       setMusic((current) => current ? { ...current, ...updated } : updated);
       setMusicCandidates([]);
     }).catch(() => {
@@ -214,6 +219,7 @@ function EditorForm({
       if (!entryId) return;
       const cover = await api.uploadImage(entryId, file);
       const updated = await api.patchMusicMetadata(entryId, { coverMediaId: cover.mediaId });
+      draftChanged.current = true;
       setMusic((current) => current ? { ...current, ...updated } : updated);
       setMusicCandidates(updated.candidates ?? []);
     }).catch(() => {
@@ -226,6 +232,7 @@ function EditorForm({
       const entryId = uploadEntryId.current;
       if (!entryId) return;
       const recognized = await api.recognizeMusic(entryId);
+      draftChanged.current = true;
       setMusic((current) => current ? { ...current, ...recognized } : recognized);
       setMusicCandidates(recognized.candidates ?? []);
     }).catch(() => {
@@ -234,12 +241,14 @@ function EditorForm({
   }
 
   function changeTitle(title: string): void {
+    draftChanged.current = true;
     const nextValue = { ...latestValue.current, title };
     latestValue.current = nextValue;
     setValue(nextValue);
   }
 
   function changeMarkdown(markdown: string): void {
+    draftChanged.current = true;
     const current = latestValue.current;
     if (uploadAnchor.current) {
       const inputRange = pendingInputRange.current;
@@ -299,9 +308,27 @@ function EditorForm({
 
   const busy = uploading || musicBusy || submitting;
 
-  function cancel(): void {
+  async function cancel(): Promise<void> {
     if (busy) return;
-    onCancel();
+    if (!isDraft) {
+      onCancel();
+      return;
+    }
+    if (!draftChanged.current) {
+      onCancel();
+      return;
+    }
+    setSubmitting(true);
+    setError(undefined);
+    try {
+      await Promise.all([pendingUpload.current, pendingMusic.current]);
+      await draftPersistence.finalize(latestValue.current);
+      onCancel();
+    } catch {
+      draftPersistence.resume();
+      setError("THE DRAFT COULD NOT BE SAVED");
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -373,9 +400,30 @@ function EditorForm({
           />
         ) : null}
         {musicError ? <p className="editor-error" role="alert">{musicError}</p> : null}
+        {isDraft && draftPersistence.state === "failed" ? (
+          <div className="draft-recovery-notice" role="alert">
+            <p>DRAFT SAVE FAILED</p>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void draftPersistence.retry().catch(() => undefined)}
+            >
+              RETRY
+            </button>
+          </div>
+        ) : null}
+        {isDraft && draftPersistence.state === "retrying" ? (
+          <p className="draft-recovery-notice" role="alert">DRAFT SAVE FAILED — RETRYING</p>
+        ) : null}
+        {isDraft && draftPersistence.state === "recovered" ? (
+          <div className="draft-recovery-notice" role="status">
+            <p>DRAFT SAVE RECOVERED</p>
+            <button type="button" onClick={draftPersistence.dismissRecovery}>DISMISS</button>
+          </div>
+        ) : null}
         {error ? <p className="editor-error" role="alert">{error}</p> : null}
         <div className="editor-actions">
-          <button type="button" disabled={busy} onClick={cancel}>CANCEL</button>
+          <button type="button" disabled={busy} onClick={() => void cancel()}>CANCEL</button>
           <button type="submit" disabled={submitting}>
             {entry ? "SAVE" : "DONE"}
           </button>

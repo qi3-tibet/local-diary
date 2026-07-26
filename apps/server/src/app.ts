@@ -24,6 +24,12 @@ import { registerMarkdownExportRoutes } from "./export/routes.js";
 import { BackupSettingsRepository } from "./settings/repository.js";
 import { registerSettingsRoutes } from "./settings/routes.js";
 import { runDailyBackupIfDue } from "./backup/scheduler.js";
+import { registerLoopbackRequestSecurity } from "./security/loopback-request.js";
+import {
+  createFileCleanupLogger,
+  runTrashCleanup,
+  startTrashCleanupScheduler,
+} from "./trash/cleanup.js";
 
 export type ServerOptions = {
   dataRoot?: string;
@@ -38,10 +44,15 @@ export type ServerOptions = {
   settingsPath?: string;
   scheduleBackups?: boolean;
   restoreContext?: () => RestoreContext | null;
+  restoreUploadLimit?: number;
+  logRoot?: string;
+  scheduleTrashCleanup?: boolean;
+  trashCleanupSchedulerFactory?: typeof startTrashCleanupScheduler;
 };
 
 export function buildServer(options: ServerOptions = {}) {
   const server = Fastify({ logger: false });
+  registerLoopbackRequestSecurity(server);
   const dataRoot = path.resolve(options.dataRoot ?? "data");
   const clock = options.clock ?? createBeijingClock();
   const defaultBackupRoot = path.resolve(options.backupRoot ?? `${dataRoot}.backups`);
@@ -52,6 +63,9 @@ export function buildServer(options: ServerOptions = {}) {
   });
   let backupRoot = settings.currentBackupRoot();
   const restoreTemporaryRoot = `${dataRoot}.restore-tmp`;
+  const cleanupLogger = createFileCleanupLogger(
+    path.join(path.resolve(options.logRoot ?? `${dataRoot}.logs`), "cleanup.ndjson"),
+  );
   let database = options.database ?? createDiaryDatabase(dataRoot);
   let mediaStore = new MediaStore(path.join(dataRoot, "media"));
   let entries = new EntryRepository(database, mediaStore);
@@ -61,11 +75,53 @@ export function buildServer(options: ServerOptions = {}) {
   let recognition = new MusicRecognitionService(database, mediaStore, options.musicRecognition?.textLookup ?? createMusicBrainzTextLookup(), options.musicRecognition?.fingerprintLookup ?? createAcoustIdFingerprintLookup());
   let snapshots = new SnapshotService({ dataRoot, backupRoot, database });
   const rebuild = () => { database = createDiaryDatabase(dataRoot); mediaStore = new MediaStore(path.join(dataRoot, "media")); entries = new EntryRepository(database, mediaStore); service = new EntryService(entries, clock); images = new ImageService(database, mediaStore); music = new MusicService(database, mediaStore); recognition = new MusicRecognitionService(database, mediaStore, options.musicRecognition?.textLookup ?? createMusicBrainzTextLookup(), options.musicRecognition?.fingerprintLookup ?? createAcoustIdFingerprintLookup()); snapshots = new SnapshotService({ dataRoot, backupRoot, database }); };
+  const trashCleanupEnabled = options.scheduleTrashCleanup
+    ?? (process.env.NODE_ENV !== "test" && !options.database);
+  const createTrashScheduler = options.trashCleanupSchedulerFactory
+    ?? startTrashCleanupScheduler;
+  let trashScheduler: ReturnType<typeof startTrashCleanupScheduler> | undefined;
+  let closing = false;
+  const startTrashScheduler = async () => {
+    if (!trashCleanupEnabled || closing || trashScheduler) return;
+    trashScheduler = createTrashScheduler({
+      cleanup: () => runTrashCleanup({
+        repository: entries,
+        mediaStore,
+        now: new Date(),
+        logger: cleanupLogger,
+      }),
+    });
+    await trashScheduler.startup;
+  };
+  const stopTrashScheduler = async () => {
+    const scheduler = trashScheduler;
+    trashScheduler = undefined;
+    await scheduler?.stop();
+  };
   let blocked = false; let active = 0; let drained!: () => void; let drain = Promise.resolve();
   server.addHook("onRequest", async (request, reply) => { if (request.url.startsWith("/api/v1/backups/restore")) return; if (blocked) return reply.code(503).send({ error: "RESTORE_IN_PROGRESS" }); (request as { restoreGate?: boolean }).restoreGate = true; active += 1; });
   server.addHook("onResponse", async (request) => { if (!(request as { restoreGate?: boolean }).restoreGate) return; active -= 1; if (active === 0) drained?.(); });
   const defaultRestoreContext = () => ({ dataRoot, temporaryRoot: restoreTemporaryRoot, coordinator: {
-    acquireBarrier: async () => { blocked = true; if (active > 0) { drain = new Promise<void>((resolvePromise) => { drained = resolvePromise; }); await drain; } return () => { blocked = false; }; },
+    acquireBarrier: async () => {
+      blocked = true;
+      try {
+        await stopTrashScheduler();
+        if (active > 0) {
+          drain = new Promise<void>((resolvePromise) => {
+            drained = resolvePromise;
+          });
+          await drain;
+        }
+      } catch (error) {
+        blocked = false;
+        await startTrashScheduler();
+        throw error;
+      }
+      return async () => {
+        blocked = false;
+        await startTrashScheduler();
+      };
+    },
     createSafetySnapshot: async () => (await snapshots.createSafetySnapshot(clock.dayKey(clock.publishedAt()))).id,
     quiesce: async () => { database.close(); }, reopen: async () => { rebuild(); }, rebuildDerivedData: async () => {},
   } });
@@ -77,7 +133,12 @@ export function buildServer(options: ServerOptions = {}) {
   void registerMediaRoutes(server, () => images);
   void registerMusicRoutes(server, () => music, () => recognition, options.musicUploadLimit);
   void registerMusicStreamRoute(server, () => database, () => mediaStore);
-  registerBackupRoutes(server, { snapshots: () => snapshots, temporaryRoot: restoreTemporaryRoot, restoreContext: options.restoreContext ?? defaultRestoreContext });
+  registerBackupRoutes(server, {
+    snapshots: () => snapshots,
+    temporaryRoot: restoreTemporaryRoot,
+    restoreContext: options.restoreContext ?? defaultRestoreContext,
+    restoreUploadLimit: options.restoreUploadLimit,
+  });
   registerMarkdownExportRoutes(server, {
     database: () => database,
     mediaStore: () => mediaStore,
@@ -110,9 +171,12 @@ export function buildServer(options: ServerOptions = {}) {
       }, 60 * 60 * 1000);
       dailyTimer.unref();
     }
+    await startTrashScheduler();
   });
   server.addHook("onClose", async () => {
+    closing = true;
     if (dailyTimer) clearInterval(dailyTimer);
+    await stopTrashScheduler();
     database.close();
   });
 

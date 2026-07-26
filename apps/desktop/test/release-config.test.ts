@@ -70,6 +70,7 @@ describe("Windows release configuration", () => {
   it("isolates release smoke data from every real or pre-release diary", () => {
     const smoke = readFileSync(path.join(desktopRoot, "scripts", "smoke-release.ps1"), "utf8");
     expect(smoke).toContain("requires a new user data root");
+    expect(smoke).toContain('$commonArguments = @("--user-data-dir=`"$resolvedUserData`"")');
     expect(smoke).toContain('$expectedDataPath = Join-Path');
     expect(smoke).toContain('"diary.sqlite"');
     expect(smoke).toContain("dataPathVerified = $true");

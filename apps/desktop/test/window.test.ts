@@ -4,6 +4,7 @@ import { createDiaryWindow, type WindowRuntime } from "../src/window.js";
 function windowRuntime() {
   let openHandler!: (details: { url: string }) => { action: "deny" };
   let navigationHandler!: (event: { preventDefault(): void }, target: string) => void;
+  let windowOptions!: ConstructorParameters<WindowRuntime["BrowserWindow"]>[0];
   const shell = { openExternal: vi.fn(async () => undefined) };
   const browserWindow = {
     loadURL: vi.fn(async () => undefined), show: vi.fn(),
@@ -14,11 +15,15 @@ function windowRuntime() {
     },
   };
   class BrowserWindow {
-    constructor() { return browserWindow; }
+    constructor(options: ConstructorParameters<WindowRuntime["BrowserWindow"]>[0]) {
+      windowOptions = options;
+      return browserWindow;
+    }
   }
   return {
     runtime: { BrowserWindow, shell } as unknown as WindowRuntime,
     shell,
+    windowOptions: () => windowOptions,
     navigate(url: string) {
       const event = { preventDefault: vi.fn() };
       navigationHandler(event, url);
@@ -39,6 +44,12 @@ describe("secure diary window navigation", () => {
     expect(external.preventDefault).toHaveBeenCalledTimes(1);
     expect(harness.shell.openExternal).toHaveBeenCalledWith("https://example.com/diary");
     expect(harness.open("http://127.0.0.1:45678/other")).toEqual({ action: "deny" });
+    expect(harness.windowOptions().webPreferences).toMatchObject({
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      preload: expect.stringMatching(/[\\/]preload\.cjs$/),
+    });
   });
 
   it.each(["javascript:alert(1)", "file:///C:/secret.txt", "data:text/html,nope", "not a url"]) (

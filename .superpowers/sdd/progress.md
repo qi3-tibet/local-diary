@@ -34,6 +34,12 @@ Merge base: `938ef83`
 - Task 3: complete (commits 67044c3..1480fdb, review clean after entry-level windowing/navigation hardening)
 - Task 4: complete (commits dc705dd..96a5799, review clean after release verification hardening)
 
+## Final integration hardening
+
+- Complete from starting HEAD `08b2861`.
+- Final read-only review clean after hostile Vite Origin, exact SQLite
+  FTS/index DDL, and required foreign-key validation fixes.
+
 ## Review notes
 
 - None.

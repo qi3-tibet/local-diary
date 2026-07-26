@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import { EntryRepository } from "../src/entries/repository.js";
 import { seedLargeDiary } from "../test-support/seed-large-diary.js";
 import { buildServer } from "../src/app.js";
+import { createInMemoryDiaryDatabase } from "../src/db/client.js";
+import { createBeijingClock } from "../src/time/beijing.js";
 
 describe("large diary performance", () => {
   it("searches 20,000 published entries within 150 ms after warmup", () => {
@@ -118,6 +120,70 @@ describe("large diary performance", () => {
         .toEqual(newest.days.flatMap((group) => group.entries.map((entry) => entry.id)));
     } finally {
       close();
+    }
+  });
+
+  it("pages real clock entries without milliseconds in both directions", () => {
+    const database = createInMemoryDiaryDatabase();
+    const repository = new EntryRepository(database);
+    const clock = createBeijingClock(() => new Date("2026-07-26T16:03:49.999Z"));
+    try {
+      expect(clock.publishedAt()).toBe("2026-07-27T00:03:00+08:00");
+      for (let index = 0; index < 241; index += 1) {
+        const draft = repository.saveDraft({
+          title: `Canonical ${index}`,
+          markdown: `Canonical body ${index}`,
+          tags: [],
+        });
+        repository.publishDraft(draft.id, clock.publishedAt());
+      }
+
+      const expected = (database.prepare(`
+        SELECT id FROM entries
+        WHERE state = 'published'
+        ORDER BY published_at DESC, id DESC
+      `).all() as Array<{ id: string }>).map(({ id }) => id);
+      const pages: Array<{
+        ids: string[];
+        previousCursor: string | null;
+        nextCursor: string | null;
+      }> = [];
+      let cursor: string | null = null;
+      while (true) {
+        const page = repository.selectDayWindow({
+          cursor,
+          direction: "older",
+          limitEntries: 120,
+        });
+        const ids = page.days.flatMap((group) => group.entries.map((entry) => entry.id));
+        if (!ids.length) break;
+        pages.push({
+          ids,
+          previousCursor: page.previousCursor,
+          nextCursor: page.nextCursor,
+        });
+        cursor = page.nextCursor;
+      }
+      const traversed = pages.flatMap(({ ids }) => ids);
+      expect(traversed).toEqual(expected);
+      expect(new Set(traversed).size).toBe(241);
+
+      const reverse: string[][] = [];
+      cursor = pages.at(-1)?.previousCursor ?? null;
+      while (cursor) {
+        const page = repository.selectDayWindow({
+          cursor,
+          direction: "newer",
+          limitEntries: 120,
+        });
+        const ids = page.days.flatMap((group) => group.entries.map((entry) => entry.id));
+        if (!ids.length) break;
+        reverse.push(ids);
+        cursor = page.previousCursor;
+      }
+      expect(reverse).toEqual(pages.slice(0, -1).reverse().map(({ ids }) => ids));
+    } finally {
+      database.close();
     }
   });
 

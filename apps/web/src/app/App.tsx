@@ -427,6 +427,9 @@ export function App() {
               checkedDraftRecovery.current = true;
               setEditingEntry(undefined);
               setView("editor");
+              window.requestAnimationFrame(() => {
+                document.querySelector<HTMLInputElement>('[aria-label="Title"]')?.focus();
+              });
             }}
           >
             NEW ENTRY

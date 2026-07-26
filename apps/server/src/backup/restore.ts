@@ -4,6 +4,11 @@ import { randomUUID } from "node:crypto";
 import type { SnapshotManifest } from "@diary/contracts";
 import { extractAndValidateArchive } from "./archive.js";
 import Database from "better-sqlite3";
+import {
+  CURRENT_DIARY_SCHEMA_VERSION,
+  migrateDiaryDatabase,
+  validateCurrentDiarySchema,
+} from "../db/client.js";
 
 export type RestorePhase = "VALIDATING" | "SAFETY_BACKUP" | "RESTORING" | "REBUILDING" | "DONE";
 export type RestoreCoordinator = {
@@ -118,7 +123,38 @@ async function materialize(root: string, manifest: SnapshotManifest, objectsRoot
     await copyFile(join(objectsRoot, item.hash), destination);
   }
 }
-function preflightDatabase(pathname: string): void { let database: Database.Database | undefined; try { database = new Database(pathname, { readonly: true, fileMustExist: true }); const quick = database.pragma("quick_check", { simple: true }); const version = database.pragma("user_version", { simple: true }) as number; const entry = database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'entries'").get(); if (quick !== "ok" || version < 8 || !entry) throw new Error("ARCHIVE_DATABASE_INVALID"); } catch (error) { if (error instanceof Error && error.message === "ARCHIVE_DATABASE_INVALID") throw error; throw new Error("ARCHIVE_DATABASE_INVALID", { cause: error }); } finally { database?.close(); } }
+function preflightDatabase(pathname: string): void {
+  let database: Database.Database | undefined;
+  try {
+    database = new Database(pathname, { fileMustExist: true });
+    const version = database.pragma("user_version", { simple: true }) as number;
+    if (
+      !Number.isInteger(version)
+      || version < 1
+      || version > CURRENT_DIARY_SCHEMA_VERSION
+    ) {
+      throw new Error("ARCHIVE_DATABASE_UNSUPPORTED");
+    }
+    migrateDiaryDatabase(database);
+    validateCurrentDiarySchema(database);
+  } catch (error) {
+    if (
+      error instanceof Error
+      && (
+        error.message === "ARCHIVE_DATABASE_UNSUPPORTED"
+        || error.message === "ARCHIVE_DATABASE_INVALID"
+      )
+    ) {
+      throw error;
+    }
+    if (error instanceof Error && error.message === "DIARY_SCHEMA_UNSUPPORTED") {
+      throw new Error("ARCHIVE_DATABASE_UNSUPPORTED", { cause: error });
+    }
+    throw new Error("ARCHIVE_DATABASE_INVALID", { cause: error });
+  } finally {
+    database?.close();
+  }
+}
 function mediaDestination(root: string, logicalPath: string, hash: string): string { const match = /^media\/objects\/([a-f0-9]{2})\/([a-f0-9]{64})\.[a-z0-9]+$/.exec(logicalPath); if (!match || match[1] !== hash.slice(0, 2) || match[2] !== hash) throw new Error("ARCHIVE_UNSAFE_MEDIA_PATH"); const destination = resolve(root, logicalPath); if (!destination.startsWith(`${root}${sep}`)) throw new Error("ARCHIVE_UNSAFE_MEDIA_PATH"); return destination; }
 async function owned(pathname: string): Promise<boolean> { return Boolean(await lstat(join(pathname, ".local-diary-restore-owner")).catch(missing)); }
 async function removeOwned(pathname: string, removeDirectory = (target: string) => rm(target, { recursive: true, force: true })): Promise<void> { if (await owned(pathname)) await removeDirectory(pathname); }

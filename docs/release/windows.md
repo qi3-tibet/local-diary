@@ -24,8 +24,8 @@ The verified release directory is `apps/desktop/release/`.
 
 | Artifact | SHA-256 |
 |---|---|
-| `Local-Diary-Setup-0.1.0-x64.exe` | `d863c2dbcde35e34e5c563fb833feeb508a2bb7b57efe6632d3d4f7624e60779` |
-| `Local-Diary-Setup-0.1.0-x64.exe.blockmap` | `011ab1e41908ee0c303453219af89406a7538054d692184f8312514acb7cc326` |
+| `Local-Diary-Setup-0.1.0-x64.exe` | `3051d78f64cca586fea2d38a84f21cf78868ff5bec18daaf280f281864567d3d` |
+| `Local-Diary-Setup-0.1.0-x64.exe.blockmap` | `41429db0ec66a556ee0f0be996165cb59200692d1a4240fa216be16f64df1980` |
 
 Verify an artifact independently:
 

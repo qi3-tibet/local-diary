@@ -4,14 +4,21 @@ import { createHash, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import yazl from "yazl";
 import { SnapshotService } from "../src/backup/snapshot.js";
-import { exportArchive } from "../src/backup/archive.js";
+import {
+  ARCHIVE_TRANSPORT_OVERHEAD_BYTES,
+  MAX_ARCHIVE_CONTENT_BYTES,
+  MAX_ARCHIVE_TRANSPORT_BYTES,
+  exportArchive,
+} from "../src/backup/archive.js";
 import { restoreArchive } from "../src/backup/restore.js";
 import { createDiaryDatabase, type DiaryDatabase } from "../src/db/client.js";
 import { MediaStore } from "../src/media/store.js";
 import { buildServer } from "../src/app.js";
+import Database from "better-sqlite3";
+import { CURRENT_DIARY_SCHEMA_VERSION } from "../src/db/client.js";
 
 describe("complete archive restore", () => {
   const roots: string[] = [];
@@ -94,6 +101,185 @@ describe("complete archive restore", () => {
     await expect(restoreArchive(archive, { dataRoot: live, temporaryRoot: temp("archive-temp-") }))
       .rejects.toThrow("ARCHIVE_DATABASE_INVALID");
     expect(await readFile(join(live, "diary.sqlite"))).toEqual(before);
+  });
+
+  it("rejects a future database schema before the live barrier or mutation", async () => {
+    expect(CURRENT_DIARY_SCHEMA_VERSION).toBe(11);
+    const candidateRoot = temp("archive-future-candidate-");
+    const candidate = createDiaryDatabase(candidateRoot);
+    candidate.pragma(`user_version = ${CURRENT_DIARY_SCHEMA_VERSION + 1}`);
+    candidate.close();
+    const archive = await archiveForDatabase(join(candidateRoot, "diary.sqlite"));
+    const live = temp("archive-future-live-");
+    const liveDatabase = createDiaryDatabase(live);
+    liveDatabase.prepare("INSERT INTO backup_state (key, value, updated_at) VALUES ('proof', 'untouched', 'now')").run();
+    liveDatabase.close();
+    const before = await readFile(join(live, "diary.sqlite"));
+    let barrierCalls = 0;
+
+    await expect(restoreArchive(archive, {
+      dataRoot: live,
+      temporaryRoot: temp("archive-future-temp-"),
+      coordinator: coordinator(() => { barrierCalls += 1; }),
+    })).rejects.toThrow("ARCHIVE_DATABASE_UNSUPPORTED");
+
+    expect(barrierCalls).toBe(0);
+    expect(await readFile(join(live, "diary.sqlite"))).toEqual(before);
+  });
+
+  it("rejects an incomplete current-version schema before live mutation", async () => {
+    const candidateRoot = temp("archive-incomplete-candidate-");
+    const pathname = join(candidateRoot, "diary.sqlite");
+    const candidate = new Database(pathname);
+    candidate.exec("CREATE TABLE entries (id TEXT PRIMARY KEY)");
+    candidate.pragma(`user_version = ${CURRENT_DIARY_SCHEMA_VERSION}`);
+    candidate.close();
+    const archive = await archiveForDatabase(pathname);
+    const live = temp("archive-incomplete-live-");
+    const liveDatabase = createDiaryDatabase(live);
+    liveDatabase.prepare("INSERT INTO backup_state (key, value, updated_at) VALUES ('proof', 'untouched', 'now')").run();
+    liveDatabase.close();
+    const before = await readFile(join(live, "diary.sqlite"));
+    let barrierCalls = 0;
+
+    await expect(restoreArchive(archive, {
+      dataRoot: live,
+      temporaryRoot: temp("archive-incomplete-temp-"),
+      coordinator: coordinator(() => { barrierCalls += 1; }),
+    })).rejects.toThrow("ARCHIVE_DATABASE_INVALID");
+
+    expect(barrierCalls).toBe(0);
+    expect(await readFile(join(live, "diary.sqlite"))).toEqual(before);
+  });
+
+  it("rejects a normal table masquerading as the required FTS index before the barrier", async () => {
+    const candidateRoot = temp("archive-fake-fts-candidate-");
+    const candidate = createDiaryDatabase(candidateRoot);
+    candidate.exec(`
+      DROP TABLE entry_search;
+      CREATE TABLE entry_search (
+        entry_id TEXT,
+        title TEXT,
+        body TEXT,
+        tags TEXT,
+        song_title TEXT,
+        song_artist TEXT,
+        song_album TEXT
+      );
+    `);
+    candidate.close();
+    const archive = await archiveForDatabase(join(candidateRoot, "diary.sqlite"));
+    const live = temp("archive-fake-fts-live-");
+    const liveDatabase = createDiaryDatabase(live);
+    liveDatabase.prepare(
+      "INSERT INTO backup_state (key, value, updated_at) VALUES ('proof', 'untouched', 'now')",
+    ).run();
+    liveDatabase.close();
+    const before = await readFile(join(live, "diary.sqlite"));
+    let barrierCalls = 0;
+
+    await expect(restoreArchive(archive, {
+      dataRoot: live,
+      temporaryRoot: temp("archive-fake-fts-temp-"),
+      coordinator: coordinator(() => { barrierCalls += 1; }),
+    })).rejects.toThrow("ARCHIVE_DATABASE_INVALID");
+
+    expect(barrierCalls).toBe(0);
+    expect(await readFile(join(live, "diary.sqlite"))).toEqual(before);
+  });
+
+  it("rejects same-column relationship tables without the required cascade constraints", async () => {
+    const candidateRoot = temp("archive-missing-foreign-key-candidate-");
+    const candidate = createDiaryDatabase(candidateRoot);
+    candidate.pragma("foreign_keys = OFF");
+    candidate.exec(`
+      ALTER TABLE entry_tags RENAME TO entry_tags_with_foreign_keys;
+      CREATE TABLE entry_tags (
+        entry_id TEXT NOT NULL,
+        tag_id TEXT NOT NULL,
+        PRIMARY KEY(entry_id, tag_id)
+      );
+      DROP TABLE entry_tags_with_foreign_keys;
+    `);
+    candidate.close();
+    const archive = await archiveForDatabase(join(candidateRoot, "diary.sqlite"));
+    const live = temp("archive-missing-foreign-key-live-");
+    const liveDatabase = createDiaryDatabase(live);
+    liveDatabase.prepare(
+      "INSERT INTO backup_state (key, value, updated_at) VALUES ('proof', 'untouched', 'now')",
+    ).run();
+    liveDatabase.close();
+    const before = await readFile(join(live, "diary.sqlite"));
+    let barrierCalls = 0;
+
+    await expect(restoreArchive(archive, {
+      dataRoot: live,
+      temporaryRoot: temp("archive-missing-foreign-key-temp-"),
+      coordinator: coordinator(() => { barrierCalls += 1; }),
+    })).rejects.toThrow("ARCHIVE_DATABASE_INVALID");
+
+    expect(barrierCalls).toBe(0);
+    expect(await readFile(join(live, "diary.sqlite"))).toEqual(before);
+  });
+
+  it("rejects a wrong index whose SQL comment contains the expected definition", async () => {
+    const candidateRoot = temp("archive-spoofed-index-candidate-");
+    const candidate = createDiaryDatabase(candidateRoot);
+    candidate.exec(`
+      DROP INDEX one_draft_only;
+      CREATE UNIQUE INDEX one_draft_only ON entries(
+        /* on entries(state) where state = 'draft' */
+        title
+      );
+    `);
+    candidate.close();
+    const archive = await archiveForDatabase(join(candidateRoot, "diary.sqlite"));
+    const live = temp("archive-spoofed-index-live-");
+    const liveDatabase = createDiaryDatabase(live);
+    liveDatabase.prepare(
+      "INSERT INTO backup_state (key, value, updated_at) VALUES ('proof', 'untouched', 'now')",
+    ).run();
+    liveDatabase.close();
+    const before = await readFile(join(live, "diary.sqlite"));
+    let barrierCalls = 0;
+
+    await expect(restoreArchive(archive, {
+      dataRoot: live,
+      temporaryRoot: temp("archive-spoofed-index-temp-"),
+      coordinator: coordinator(() => { barrierCalls += 1; }),
+    })).rejects.toThrow("ARCHIVE_DATABASE_INVALID");
+
+    expect(barrierCalls).toBe(0);
+    expect(await readFile(join(live, "diary.sqlite"))).toEqual(before);
+  });
+
+  it("stage-migrates a supported older schema and validates the complete current schema", async () => {
+    const candidateRoot = temp("archive-older-candidate-");
+    const candidate = createDiaryDatabase(candidateRoot);
+    candidate.exec(`
+      DROP INDEX entries_published_day_cursor;
+      DROP INDEX entries_published_cursor;
+      DROP TABLE trash_cleanup_objects;
+    `);
+    candidate.pragma("user_version = 8");
+    candidate.close();
+    const archive = await archiveForDatabase(join(candidateRoot, "diary.sqlite"));
+    const restoredRoot = temp("archive-older-restored-");
+
+    await restoreArchive(archive, {
+      dataRoot: restoredRoot,
+      temporaryRoot: temp("archive-older-temp-"),
+    });
+
+    const restored = new Database(join(restoredRoot, "diary.sqlite"), {
+      readonly: true,
+      fileMustExist: true,
+    });
+    expect(restored.pragma("user_version", { simple: true })).toBe(CURRENT_DIARY_SCHEMA_VERSION);
+    expect(restored.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'entries_published_cursor'",
+    ).get()).toEqual({ name: "entries_published_cursor" });
+    restored.close();
   });
 
   it("requires a safety snapshot before replacing an existing diary", async () => {
@@ -229,6 +415,60 @@ describe("complete archive restore", () => {
     expect(next.statusCode).toBe(200);
   });
 
+  it("waits for the active trash cleanup before closing the database for restore", async () => {
+    const dataRoot = temp("archive-cleanup-barrier-");
+    const backupRoot = temp("archive-cleanup-barrier-backup-");
+    const database = createDiaryDatabase(dataRoot);
+    databases.push(database);
+    let releaseCleanupStop!: () => void;
+    const stop = vi.fn()
+      .mockImplementationOnce(() => new Promise<void>((resolve) => {
+        releaseCleanupStop = resolve;
+      }))
+      .mockResolvedValue(undefined);
+    const schedulerFactory = vi.fn(() => ({
+      startup: Promise.resolve(),
+      stop,
+    }));
+    const close = vi.spyOn(database, "close");
+    const server = buildServer({
+      dataRoot,
+      backupRoot,
+      database,
+      scheduleBackups: false,
+      scheduleTrashCleanup: true,
+      trashCleanupSchedulerFactory: schedulerFactory,
+    });
+    servers.push(server);
+    await server.ready();
+    const snapshots = new SnapshotService({ dataRoot, backupRoot, database });
+    const snapshot = await snapshots.create("2026-07-26");
+    const archive = join(temp("archive-cleanup-barrier-output-"), "archive.zip");
+    await exportArchive(snapshot.id, snapshots, archive);
+    const bytes = await readFile(archive);
+    const boundary = "restore-cleanup-barrier";
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="archive"; filename="archive.zip"\r\nContent-Type: application/zip\r\n\r\n`),
+      bytes,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]);
+
+    const restoring = server.inject({
+      method: "POST",
+      url: "/api/v1/backups/restore",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      payload: body,
+    });
+    await vi.waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+    expect(close).not.toHaveBeenCalled();
+
+    releaseCleanupStop();
+    const response = await restoring;
+    expect(response.body).toContain('"phase":"DONE"');
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(schedulerFactory).toHaveBeenCalledTimes(2);
+  });
+
   it("streams FAILED for a corrupt uploaded archive without mutating live data", async () => {
     const dataRoot = temp("archive-corrupt-route-");
     const server = buildServer({ dataRoot, backupRoot: temp("archive-corrupt-backup-") });
@@ -261,6 +501,31 @@ describe("complete archive restore", () => {
       .toBe("The current diary remains.");
   });
 
+  it("keeps restore transport large enough for every export-valid archive with bounded overhead", () => {
+    expect(MAX_ARCHIVE_CONTENT_BYTES).toBe(20 * 1024 * 1024 * 1024);
+    expect(MAX_ARCHIVE_TRANSPORT_BYTES).toBe(
+      MAX_ARCHIVE_CONTENT_BYTES + ARCHIVE_TRANSPORT_OVERHEAD_BYTES,
+    );
+    expect(ARCHIVE_TRANSPORT_OVERHEAD_BYTES).toBeGreaterThanOrEqual(256 * 1024 * 1024);
+    expect(ARCHIVE_TRANSPORT_OVERHEAD_BYTES).toBeLessThanOrEqual(1024 * 1024 * 1024);
+  });
+
+  it("accepts an archive at the configured transport boundary and rejects one byte over", async () => {
+    const dataRoot = temp("archive-boundary-route-");
+    const server = buildServer({
+      dataRoot,
+      backupRoot: temp("archive-boundary-backup-"),
+      restoreUploadLimit: 16,
+    });
+    servers.push(server);
+
+    const accepted = await uploadBytes(server, Buffer.alloc(16));
+    const oversized = await uploadBytes(server, Buffer.alloc(17));
+
+    expect(accepted).not.toContain("ARCHIVE_SIZE_LIMIT");
+    expect(oversized).toContain("ARCHIVE_SIZE_LIMIT");
+  });
+
   function temp(prefix: string): string {
     const root = mkdtempSync(join(tmpdir(), prefix));
     roots.push(root);
@@ -273,5 +538,51 @@ describe("complete archive restore", () => {
     objects.forEach(([hash, bytes]) => zip.addBuffer(bytes, `objects/${hash}`, { compress: false }));
     zip.end();
     await pipeline(zip.outputStream, createWriteStream(pathname, { flags: "wx" }));
+  }
+
+  async function uploadBytes(
+    server: ReturnType<typeof buildServer>,
+    bytes: Buffer,
+  ): Promise<string> {
+    const boundary = `capacity-${randomUUID()}`;
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="archive"; filename="archive.zip"\r\nContent-Type: application/zip\r\n\r\n`),
+      bytes,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]);
+    return (await server.inject({
+      method: "POST",
+      url: "/api/v1/backups/restore",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      payload: body,
+    })).body;
+  }
+
+  async function archiveForDatabase(databasePath: string): Promise<string> {
+    const bytes = await readFile(databasePath);
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    const archive = join(temp("archive-schema-output-"), "schema.zip");
+    await writeArchive(archive, {
+      format: "local-diary-snapshot",
+      version: 1,
+      id: randomUUID(),
+      day: "2026-07-26",
+      createdAt: "2026-07-26T00:00:00.000+08:00",
+      databaseObject: hash,
+      mediaObjects: [],
+    }, [[hash, bytes]]);
+    return archive;
+  }
+
+  function coordinator(onBarrier: () => void) {
+    return {
+      acquireBarrier: async () => {
+        onBarrier();
+        return () => undefined;
+      },
+      createSafetySnapshot: async () => undefined,
+      quiesce: async () => undefined,
+      reopen: async () => undefined,
+    };
   }
 });

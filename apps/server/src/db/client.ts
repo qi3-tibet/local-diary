@@ -3,6 +3,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 
 export type DiaryDatabase = Database.Database;
+export const CURRENT_DIARY_SCHEMA_VERSION = 11;
 
 const migration001 = `
   CREATE TABLE entries (
@@ -106,9 +107,25 @@ const migration010 = `
     WHERE state = 'published';
 `;
 
+const migration011 = `
+  CREATE TABLE trash_cleanup_objects (
+    hash TEXT NOT NULL,
+    extension TEXT NOT NULL,
+    queued_at TEXT NOT NULL,
+    PRIMARY KEY(hash, extension)
+  );
+`;
+
 export function migrateDiaryDatabase(db: DiaryDatabase): void {
   db.pragma("foreign_keys = ON");
   const version = db.pragma("user_version", { simple: true }) as number;
+  if (
+    !Number.isInteger(version)
+    || version < 0
+    || version > CURRENT_DIARY_SCHEMA_VERSION
+  ) {
+    throw new Error("DIARY_SCHEMA_UNSUPPORTED");
+  }
   if (version < 1) {
     db.transaction(() => {
       db.exec(migration001);
@@ -187,11 +204,189 @@ export function migrateDiaryDatabase(db: DiaryDatabase): void {
       db.pragma("user_version = 10");
     })();
   }
+
+  if (version < 11) {
+    db.transaction(() => {
+      db.exec(migration011);
+      db.pragma("user_version = 11");
+    })();
+  }
+}
+
+export function validateCurrentDiarySchema(db: DiaryDatabase): void {
+  const version = db.pragma("user_version", { simple: true }) as number;
+  if (version !== CURRENT_DIARY_SCHEMA_VERSION) throw new Error("DIARY_SCHEMA_INCOMPLETE");
+  if (db.pragma("quick_check", { simple: true }) !== "ok") throw new Error("DIARY_SCHEMA_INCOMPLETE");
+  if ((db.pragma("foreign_key_check") as unknown[]).length !== 0) {
+    throw new Error("DIARY_SCHEMA_INCOMPLETE");
+  }
+
+  const requiredColumns: Record<string, string[]> = {
+    entries: [
+      "id", "title", "markdown", "state", "published_at", "created_at",
+      "updated_at", "deleted_at", "edited_at",
+    ],
+    tags: ["id", "name"],
+    entry_tags: ["entry_id", "tag_id"],
+    entry_search: [
+      "entry_id", "title", "body", "tags", "song_title", "song_artist", "song_album",
+    ],
+    media: [
+      "id", "entry_id", "original_hash", "original_mime", "original_extension",
+      "display_hash", "thumbnail_hash", "derivative_status", "derivative_error",
+      "created_at", "updated_at",
+    ],
+    entry_music: [
+      "entry_id", "media_id", "title", "artist", "album", "year", "cover_media_id",
+      "recognition_status", "user_overrides_json", "original_filename",
+      "recognition_candidates_json", "recognition_source", "selected_candidate_id",
+      "recognition_revision", "metadata_revision",
+      "recognition_candidates_metadata_revision",
+    ],
+    backup_state: ["key", "value", "updated_at"],
+    trash_cleanup_objects: ["hash", "extension", "queued_at"],
+  };
+  for (const [table, columns] of Object.entries(requiredColumns)) {
+    const actual = new Set(
+      (db.pragma(`table_info('${table}')`) as Array<{ name: string }>).map(({ name }) => name),
+    );
+    if (columns.some((column) => !actual.has(column))) {
+      throw new Error("DIARY_SCHEMA_INCOMPLETE");
+    }
+  }
+
+  const objects = new Map(
+    (db.prepare(`
+      SELECT name, type, tbl_name, sql
+      FROM sqlite_master
+      WHERE name NOT LIKE 'sqlite_%'
+    `).all() as Array<{
+      name: string;
+      type: string;
+      tbl_name: string;
+      sql: string | null;
+    }>).map((object) => [object.name, object]),
+  );
+  const normalTables = [
+    "entries",
+    "tags",
+    "entry_tags",
+    "media",
+    "entry_music",
+    "backup_state",
+    "trash_cleanup_objects",
+  ];
+  if (normalTables.some((name) => objects.get(name)?.type !== "table")) {
+    throw new Error("DIARY_SCHEMA_INCOMPLETE");
+  }
+
+  const search = objects.get("entry_search");
+  const searchSql = normalizeSchemaSql(search?.sql);
+  if (
+    search?.type !== "table"
+    || searchSql !== [
+      "create virtual table entry_search using fts5(",
+      "entry_id unindexed,title,body,tags,song_title,song_artist,song_album,",
+      "tokenize = 'trigram')",
+    ].join("")
+  ) {
+    throw new Error("DIARY_SCHEMA_INCOMPLETE");
+  }
+  try {
+    db.prepare(`
+      SELECT entry_id FROM entry_search
+      WHERE entry_search MATCH ?
+      LIMIT 0
+    `).all("schema-probe");
+  } catch {
+    throw new Error("DIARY_SCHEMA_INCOMPLETE");
+  }
+
+  const requiredIndexes: Record<string, {
+    table: string;
+    sql: string;
+  }> = {
+    one_draft_only: {
+      table: "entries",
+      sql: "create unique index one_draft_only on entries(state) where state = 'draft'",
+    },
+    media_entry_id: {
+      table: "media",
+      sql: "create index media_entry_id on media(entry_id)",
+    },
+    entries_published_day_cursor: {
+      table: "entries",
+      sql: [
+        "create index entries_published_day_cursor ",
+        "on entries(state,substr(published_at,1,10),published_at desc,id desc) ",
+        "where state = 'published'",
+      ].join(""),
+    },
+    entries_published_cursor: {
+      table: "entries",
+      sql: [
+        "create index entries_published_cursor ",
+        "on entries(state,published_at desc,id desc) ",
+        "where state = 'published'",
+      ].join(""),
+    },
+  };
+  for (const [name, expected] of Object.entries(requiredIndexes)) {
+    const index = objects.get(name);
+    const sql = normalizeSchemaSql(index?.sql);
+    if (
+      index?.type !== "index"
+      || index.tbl_name !== expected.table
+      || sql !== normalizeSchemaSql(expected.sql)
+    ) {
+      throw new Error("DIARY_SCHEMA_INCOMPLETE");
+    }
+  }
+
+  const requiredForeignKeys: Record<string, string[]> = {
+    entry_tags: [
+      "entry_id:entries:id:NO ACTION:CASCADE",
+      "tag_id:tags:id:NO ACTION:CASCADE",
+    ],
+    media: ["entry_id:entries:id:NO ACTION:CASCADE"],
+    entry_music: [
+      "cover_media_id:media:id:NO ACTION:RESTRICT",
+      "entry_id:entries:id:NO ACTION:CASCADE",
+      "media_id:media:id:NO ACTION:RESTRICT",
+    ],
+  };
+  for (const [table, expected] of Object.entries(requiredForeignKeys)) {
+    const actual = (db.pragma(`foreign_key_list('${table}')`) as Array<{
+      table: string;
+      from: string;
+      to: string;
+      on_update: string;
+      on_delete: string;
+    }>).map((foreignKey) => [
+      foreignKey.from,
+      foreignKey.table,
+      foreignKey.to,
+      foreignKey.on_update,
+      foreignKey.on_delete,
+    ].join(":")).sort();
+    if (actual.join("|") !== [...expected].sort().join("|")) {
+      throw new Error("DIARY_SCHEMA_INCOMPLETE");
+    }
+  }
+}
+
+function normalizeSchemaSql(sql: string | null | undefined): string {
+  return (sql ?? "")
+    .replace(/\s+/g, " ")
+    .replace(/\s*([(),])\s*/g, "$1")
+    .trim()
+    .toLowerCase();
 }
 
 export function createInMemoryDiaryDatabase(): DiaryDatabase {
   const db = new Database(":memory:");
   migrateDiaryDatabase(db);
+  validateCurrentDiarySchema(db);
   return db;
 }
 
@@ -199,5 +394,6 @@ export function createDiaryDatabase(dataRoot: string): DiaryDatabase {
   mkdirSync(dataRoot, { recursive: true });
   const db = new Database(path.join(dataRoot, "diary.sqlite"));
   migrateDiaryDatabase(db);
+  validateCurrentDiarySchema(db);
   return db;
 }

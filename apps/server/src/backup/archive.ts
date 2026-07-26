@@ -12,9 +12,12 @@ import type { SnapshotService } from "./snapshot.js";
 const HASH = /^[a-f0-9]{64}$/;
 const MAX_ENTRIES = 1_000_002;
 const MAX_OBJECT_BYTES = 2 * 1024 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 20 * 1024 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
 const ZIP_EPOCH = new Date("1980-01-01T00:00:00.000Z");
+export const MAX_ARCHIVE_CONTENT_BYTES = 20 * 1024 * 1024 * 1024;
+export const ARCHIVE_TRANSPORT_OVERHEAD_BYTES = 512 * 1024 * 1024;
+export const MAX_ARCHIVE_TRANSPORT_BYTES =
+  MAX_ARCHIVE_CONTENT_BYTES + ARCHIVE_TRANSPORT_OVERHEAD_BYTES;
 
 export type ExtractedArchive = { manifest: SnapshotManifest; objectsRoot: string };
 
@@ -75,7 +78,7 @@ export async function extractAndValidateArchive(archivePath: string, stagingRoot
               || (entry.compressedSize > 0 && entry.uncompressedSize / entry.compressedSize > 200)) throw new Error("ARCHIVE_SIZE_LIMIT");
             if ((entry.externalFileAttributes >>> 16) !== 0 && !isRegular(entry)) throw new Error("ARCHIVE_SPECIAL_ENTRY");
             total += entry.uncompressedSize;
-            if (count > MAX_ENTRIES || total > MAX_TOTAL_BYTES) throw new Error("ARCHIVE_SIZE_LIMIT");
+            if (count > MAX_ENTRIES || total > MAX_ARCHIVE_CONTENT_BYTES) throw new Error("ARCHIVE_SIZE_LIMIT");
             if (name === "manifest.json") {
               const bytes = await readSmallEntry(archive, entry, MAX_MANIFEST_BYTES);
               try { manifest = snapshotManifestSchema.parse(JSON.parse(bytes.toString("utf8"))); }

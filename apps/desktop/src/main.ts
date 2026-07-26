@@ -6,6 +6,7 @@ import {
   type LocalServiceOptions,
 } from "./service-lifecycle.js";
 import { createDiaryWindow } from "./window.js";
+import { registerBackupDirectoryBridge } from "./backup-directory-bridge.js";
 
 type DesktopWindow = {
   isDestroyed?(): boolean;
@@ -212,6 +213,11 @@ export async function runElectronMain(): Promise<void> {
     (serviceOptions) => buildServer(serviceOptions),
     roots,
   );
+  const disposeBackupDirectoryBridge = registerBackupDirectoryBridge({
+    ipcMain: electron.ipcMain,
+    dialog: electron.dialog,
+  });
+  electron.app.on("will-quit", disposeBackupDirectoryBridge);
   const harness = createDesktopHarness({
     argv: process.argv,
     app: electron.app,
