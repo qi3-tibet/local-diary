@@ -77,6 +77,20 @@ describe("Timeline", () => {
     ]);
   });
 
+  it("keeps a legacy date-only entry on its recorded day without inventing a time", () => {
+    const dateOnlyEntry: Entry = {
+      ...entriesForTwoDays[2],
+      id: "date-only-entry",
+      publishedAt: "2026-06-05",
+    };
+
+    render(<Timeline entries={[dateOnlyEntry]} />);
+
+    expect(screen.getByTestId("day-2026-06-05")).toBeVisible();
+    expect(screen.getByRole("time")).toHaveAttribute("datetime", "2026-06-05");
+    expect(screen.getByRole("time")).toBeEmptyDOMElement();
+  });
+
   it("renders an English empty reading state", () => {
     render(<Timeline entries={[]} />);
 

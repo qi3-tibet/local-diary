@@ -692,6 +692,7 @@ function decodeEntryCursor(value: string, expectedDirection: "older" | "newer", 
 
 function isPublishedTimestamp(value: unknown): value is string {
   if (typeof value !== "string") return false;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return isCalendarDay(value);
   const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?(Z|[+-]\d{2}:\d{2})$/.exec(value);
   if (!match || !isCalendarDay(match[1])) return false;
   const hour = Number(match[2]);

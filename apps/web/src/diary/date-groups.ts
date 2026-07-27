@@ -1,6 +1,7 @@
 import type { Entry } from "@diary/contracts";
 
 const BEIJING_TIME_ZONE = "Asia/Shanghai";
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
 export type DayGroup = {
   day: string;
@@ -8,6 +9,8 @@ export type DayGroup = {
 };
 
 function beijingDay(isoTimestamp: string): string {
+  if (DATE_ONLY.test(isoTimestamp)) return isoTimestamp;
+
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: BEIJING_TIME_ZONE,
     year: "numeric",
@@ -73,6 +76,8 @@ export function formatRailMonth(day: string): string {
 }
 
 export function formatEntryTime(isoTimestamp: string): string {
+  if (DATE_ONLY.test(isoTimestamp)) return "";
+
   return new Intl.DateTimeFormat("en-GB", {
     timeZone: BEIJING_TIME_ZONE,
     hour: "2-digit",

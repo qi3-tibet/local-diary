@@ -289,6 +289,22 @@ describe("portable Markdown export", () => {
     await expect(readFile(missingTarget)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("exports a date-only legacy entry without inventing a time in its filename or metadata", async () => {
+    const fixture = createFixture();
+    const entryId = seedEntry(fixture.database, {
+      title: "旧记录",
+      markdown: "只记得这一天。",
+      publishedAt: "2026-06-05",
+    });
+
+    const entries = await readZip(await exportFixture(fixture, { entryId }));
+    const markdownName = [...entries.keys()].find((name) => name.endsWith(".md"))!;
+    const { attributes } = parseFrontMatter(entries.get(markdownName)!.toString("utf8"));
+
+    expect(markdownName).toBe("2026-06-05/旧记录.md");
+    expect(attributes.published_at).toBe("2026-06-05");
+  });
+
   it("validates route selection strictly, streams a safe download, and cleans owned temporary files", async () => {
     const dataRoot = tempRoot("markdown-route-data-");
     const database = createDiaryDatabase(dataRoot);

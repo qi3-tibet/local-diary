@@ -14,7 +14,7 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/u;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const HASH = /^[a-f0-9]{64}$/u;
 const EXTENSION = /^[a-z0-9]{1,16}$/u;
-const PUBLISHED_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00\+08:00$/u;
+const PUBLISHED_AT = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:00\+08:00)?$/u;
 const MAX_RANGE_DAYS = 366;
 const MAX_ENTRIES = 10_000;
 const MAX_MEDIA = 100_000;
@@ -196,8 +196,10 @@ function buildDocument(
     throw new Error("EXPORT_ENTRY_INVALID");
   }
   const day = entry.published_at.slice(0, 10);
-  const time = entry.published_at.slice(11, 16).replace(":", "");
-  const baseName = `${time}-${safeSlug(entry.title)}`;
+  const time = entry.published_at.length > 10
+    ? entry.published_at.slice(11, 16).replace(":", "")
+    : null;
+  const baseName = time ? `${time}-${safeSlug(entry.title)}` : safeSlug(entry.title);
   const collisionKey = `${day}/${baseName}`.toLocaleLowerCase("en");
   const collision = (usedNames.get(collisionKey) ?? 0) + 1;
   usedNames.set(collisionKey, collision);
