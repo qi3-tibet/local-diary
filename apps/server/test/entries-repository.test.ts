@@ -41,4 +41,23 @@ describe("EntryRepository", () => {
       limitEntries: 1,
     })).not.toThrow();
   });
+
+  it("lists only published calendar days with their record counts", () => {
+    const db = createTestDatabase();
+    const repository = new EntryRepository(db);
+    const insert = db.prepare(`
+      INSERT INTO entries (
+        id, title, markdown, state, published_at, created_at, updated_at, deleted_at
+      ) VALUES (?, 'Index', 'Body', ?, ?, '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z', NULL)
+    `);
+    insert.run("10000000-0000-4000-8000-000000000001", "published", "2026-07-26T10:00:00+08:00");
+    insert.run("10000000-0000-4000-8000-000000000002", "published", "2026-07-26T11:00:00+08:00");
+    insert.run("10000000-0000-4000-8000-000000000003", "published", "2026-06-05");
+    insert.run("10000000-0000-4000-8000-000000000004", "trashed", "2026-07-20T10:00:00+08:00");
+
+    expect(repository.listPublishedDays()).toEqual([
+      { day: "2026-07-26", totalEntries: 2 },
+      { day: "2026-06-05", totalEntries: 1 },
+    ]);
+  });
 });

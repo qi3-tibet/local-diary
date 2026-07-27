@@ -185,4 +185,33 @@ describe("DateRail", () => {
     fireEvent.click(screen.getByRole("link", { name: "July 26, 2026" }));
     expect(onJumpDay).toHaveBeenCalledWith("2026-07-26");
   });
+
+  it("opens a synchronized month calendar where only recorded days are buttons", () => {
+    const onJumpDay = vi.fn();
+    const { rerender } = render(
+      <DateRail
+        entries={entriesForTwoDays}
+        availableDays={["2026-07-26", "2026-07-25", "2026-06-28"]}
+        activeDay="2026-07-25"
+        onJumpDay={onJumpDay}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Open record calendar for July 2026" }));
+    const calendar = screen.getByRole("dialog", { name: "Record calendar" });
+    expect(within(calendar).getByRole("button", { name: "July 26, 2026" })).toBeEnabled();
+    expect(within(calendar).queryByRole("button", { name: "July 23, 2026" })).not.toBeInTheDocument();
+    fireEvent.click(within(calendar).getByRole("button", { name: "July 26, 2026" }));
+    expect(onJumpDay).toHaveBeenCalledWith("2026-07-26");
+
+    rerender(
+      <DateRail
+        entries={entriesForTwoDays}
+        availableDays={["2026-07-26", "2026-07-25", "2026-06-28"]}
+        activeDay="2026-06-28"
+        onJumpDay={onJumpDay}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Open record calendar for June 2026" })).toBeVisible();
+  });
 });

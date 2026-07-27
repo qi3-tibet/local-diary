@@ -53,6 +53,18 @@ test.beforeEach(async ({ page }) => {
       }),
     });
   });
+  await page.route("**/api/v1/entries/calendar", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        days: [
+          { day: "2026-07-26", totalEntries: 2 },
+          { day: "2026-07-25", totalEntries: 1 },
+        ],
+      }),
+    });
+  });
   await page.route("**/api/v1/draft", async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: "null" });
   });
@@ -76,13 +88,27 @@ test("Fine Scale dark screen matches the approved baseline", async ({ page }) =>
   });
 });
 
+test("record calendar matches the minimal desktop treatment", async ({ page }) => {
+  await setTheme(page, "light");
+  await page.locator(".calendar-trigger").click();
+  await expect(page.getByRole("dialog", { name: "Record calendar" })).toBeVisible();
+  await expect(page).toHaveScreenshot("fine-scale-calendar.png", {
+    animations: "disabled",
+    fullPage: true,
+  });
+});
+
 test("desktop controls avoid clipped and trailing chrome", async ({ page }) => {
   await setTheme(page, "system");
 
-  const dateInput = page.locator(".date-jump input");
-  await expect(dateInput).toBeVisible();
-  const dateInputBox = await dateInput.boundingBox();
-  expect(dateInputBox?.width).toBeGreaterThanOrEqual(108);
+  const calendarTrigger = page.locator(".calendar-trigger");
+  await expect(calendarTrigger).toBeVisible();
+  const calendarTriggerBox = await calendarTrigger.boundingBox();
+  expect(calendarTriggerBox?.width).toBeGreaterThanOrEqual(108);
+  await calendarTrigger.click();
+  const calendar = page.getByRole("dialog", { name: "Record calendar" });
+  await expect(calendar.getByRole("button", { name: "July 26, 2026" })).toBeVisible();
+  await expect(calendar.getByRole("button", { name: "July 24, 2026" })).toHaveCount(0);
 
   const themeControl = page.locator(".theme-control");
   await expect(themeControl).toHaveAttribute("data-preference", "system");

@@ -299,6 +299,16 @@ export class EntryRepository {
     return rows.map((row) => this.toEntry(row));
   }
 
+  listPublishedDays(): Array<{ day: string; totalEntries: number }> {
+    return this.db.prepare(`
+      SELECT substr(published_at, 1, 10) AS day, COUNT(*) AS totalEntries
+      FROM entries
+      WHERE state = 'published' AND published_at IS NOT NULL
+      GROUP BY substr(published_at, 1, 10)
+      ORDER BY day DESC
+    `).all() as Array<{ day: string; totalEntries: number }>;
+  }
+
   selectDayWindow(options: DayPageOptions): DayPage {
     const limitEntries = clampLimit(options.limitEntries, 120, 1, 120);
     const boundary = options.cursor ? decodeEntryCursor(options.cursor, options.direction, this.cursorKey) : null;

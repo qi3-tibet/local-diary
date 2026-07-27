@@ -60,5 +60,11 @@ describe("entry routes", () => {
     expect(entries.statusCode).toBe(200);
     expect(entries.json()).toMatchObject([{ title: "已完成", state: "published" }]);
     expect(entries.json()).toHaveLength(1);
+
+    const calendar = await server.inject({ method: "GET", url: "/api/v1/entries/calendar" });
+    expect(calendar.statusCode).toBe(200);
+    expect(calendar.json()).toEqual({
+      days: [{ day: "2026-07-27", totalEntries: 1 }],
+    });
   });
 });

@@ -56,6 +56,10 @@ export function App() {
     queryKey: ["published-entries", requestedDay],
     queryFn: () => api.listDayPage({ day: requestedDay }),
   });
+  const calendarDaysQuery = useQuery({
+    queryKey: ["calendar-days"],
+    queryFn: api.listCalendarDays,
+  });
   const draftRecoveryQuery = useQuery({
     queryKey: ["draft"],
     queryFn: api.getDraft,
@@ -185,6 +189,7 @@ export function App() {
     await api.trashEntry(entry.id);
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["published-entries"] }),
+      queryClient.invalidateQueries({ queryKey: ["calendar-days"] }),
       queryClient.invalidateQueries({ queryKey: ["search"] }),
       queryClient.invalidateQueries({ queryKey: ["trash"] }),
     ]);
@@ -194,6 +199,7 @@ export function App() {
     await api.restoreEntry(entry.id);
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["published-entries"] }),
+      queryClient.invalidateQueries({ queryKey: ["calendar-days"] }),
       queryClient.invalidateQueries({ queryKey: ["search"] }),
       queryClient.invalidateQueries({ queryKey: ["trash"] }),
     ]);
@@ -212,6 +218,7 @@ export function App() {
     void Promise.all([
       queryClient.invalidateQueries({ queryKey: ["draft"] }),
       queryClient.invalidateQueries({ queryKey: ["published-entries"] }),
+      queryClient.invalidateQueries({ queryKey: ["calendar-days"] }),
       queryClient.invalidateQueries({ queryKey: ["search"] }),
     ]);
     checkedDraftRecovery.current = true;
@@ -224,6 +231,7 @@ export function App() {
     void Promise.all([
       queryClient.invalidateQueries({ queryKey: ["draft"] }),
       queryClient.invalidateQueries({ queryKey: ["published-entries"] }),
+      queryClient.invalidateQueries({ queryKey: ["calendar-days"] }),
       queryClient.invalidateQueries({ queryKey: ["search"] }),
       queryClient.invalidateQueries({ queryKey: ["trash"] }),
     ]);
@@ -309,6 +317,13 @@ export function App() {
 
   async function jumpToDay(day: string): Promise<void> {
     const generation = beginNavigation({ day });
+    if (days.includes(day)) {
+      if (generation !== navigationGeneration.current) return;
+      setActiveDay(day);
+      setTimelineNavigationKey((value) => value + 1);
+      setNavigationReady(true);
+      return;
+    }
     try {
       const next = await api.listDayPage({ day });
       if (generation !== navigationGeneration.current) return;
@@ -412,6 +427,7 @@ export function App() {
     <div className="app-shell" id="top">
       <DateRail
         entries={entries}
+        availableDays={calendarDaysQuery.data ?? days}
         activeDay={activeDay}
         onJumpDay={(day) => void jumpToDay(day)}
         footer={<ThemeControl preference={preference} onChange={setPreference} />}

@@ -104,6 +104,17 @@ export function createApiClient(request: Request = fetch) {
       return (await response.json()) as DayPage;
     },
 
+    async listCalendarDays(): Promise<string[]> {
+      const response = await request("/api/v1/entries/calendar", {
+        headers: { accept: "application/json" },
+      });
+      if (!response.ok) throw new Error(`Could not load diary calendar (${response.status}).`);
+      const result = (await response.json()) as {
+        days: Array<{ day: string; totalEntries: number }>;
+      };
+      return result.days.map(({ day }) => day);
+    },
+
     async getDraft(): Promise<Entry | null> {
       const response = await request("/api/v1/draft", {
         headers: { accept: "application/json" },

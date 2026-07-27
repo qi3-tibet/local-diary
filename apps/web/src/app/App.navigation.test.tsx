@@ -10,6 +10,7 @@ const timelineProps = vi.hoisted(() => vi.fn());
 const dateRailProps = vi.hoisted(() => vi.fn());
 const searchProps = vi.hoisted(() => vi.fn());
 const listDayPage = vi.hoisted(() => vi.fn());
+const listCalendarDays = vi.hoisted(() => vi.fn());
 const renderTimelineSections = vi.hoisted(() => ({ value: false }));
 const targetEntry = vi.hoisted(() => ({
   id: "00000000-0000-4000-8000-000000000001",
@@ -28,6 +29,7 @@ const targetEntry = vi.hoisted(() => ({
 vi.mock("../api/client", () => ({
   api: {
     listDayPage,
+    listCalendarDays,
     getDraft: vi.fn(async () => null),
   },
 }));
@@ -81,6 +83,8 @@ describe("App programmatic day navigation", () => {
     dateRailProps.mockClear();
     searchProps.mockClear();
     listDayPage.mockReset();
+    listCalendarDays.mockReset();
+    listCalendarDays.mockResolvedValue(["2025-07-26", "2025-07-25"]);
     listDayPage.mockResolvedValue({
       days: [{ day: "2025-07-26", totalEntries: 1, entries: [targetEntry] }],
       previousCursor: "newer",
@@ -240,6 +244,34 @@ describe("App programmatic day navigation", () => {
       });
       await jump;
     });
+  });
+
+  it("jumps within cached dates without replacing the timeline with the newest page", async () => {
+    window.history.replaceState({}, "", "/");
+    const older = {
+      ...targetEntry,
+      id: "00000000-0000-4000-8000-000000000002",
+      publishedAt: "2025-07-25T10:00:00.000+08:00",
+    };
+    listDayPage.mockResolvedValueOnce({
+      days: [
+        { day: "2025-07-26", totalEntries: 1, entries: [targetEntry] },
+        { day: "2025-07-25", totalEntries: 1, entries: [older] },
+      ],
+      previousCursor: null,
+      nextCursor: null,
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><App /></QueryClientProvider>);
+    await screen.findByTestId("timeline");
+
+    act(() => dateRailProps.mock.calls.at(-1)![0].onJumpDay("2025-07-25"));
+
+    await waitFor(() => {
+      const latest = timelineProps.mock.calls.at(-1)![0] as { activeDay?: string };
+      expect(latest.activeDay).toBe("2025-07-25");
+    });
+    expect(listDayPage).toHaveBeenCalledTimes(1);
   });
 
   it("releases the paging lock and reports a failed day navigation", async () => {

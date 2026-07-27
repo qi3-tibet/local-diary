@@ -347,6 +347,47 @@ describe("WindowedTimeline", () => {
     expect(onNeedNewer).toHaveBeenCalledTimes(1);
   });
 
+  it("discards a saved scroll anchor while explicit date navigation is active", () => {
+    scrollPosition = 200;
+    let moved = 0;
+    const onNeedNewer = vi.fn();
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function rect(this: HTMLElement) {
+      if (this.dataset.testid?.endsWith("window-sentinel")) {
+        return { x: 0, y: 100, top: 100, left: 0, right: 1, bottom: 101, width: 1, height: 1, toJSON: () => ({}) } as DOMRect;
+      }
+      const index = [...document.querySelectorAll("article.entry")].indexOf(this as HTMLElement);
+      const top = index < 0 ? 2000 : 50 + index * 100 + moved;
+      return { x: 0, y: top, top, left: 0, right: 100, bottom: top + 90, width: 100, height: 90, toJSON: () => ({}) } as DOMRect;
+    });
+    const entries = Array.from({ length: 15 }, (_, day) => entry(day));
+    const { rerender } = render(
+      <WindowedTimeline entries={entries} activeDay="2020-07-08" onNeedNewer={onNeedNewer} />,
+    );
+    setScrollY(100);
+    expect(onNeedNewer).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <WindowedTimeline
+        entries={entries}
+        activeDay="2020-07-08"
+        onNeedNewer={onNeedNewer}
+        preserveAnchor={false}
+      />,
+    );
+    vi.mocked(window.scrollBy).mockClear();
+    moved = 64;
+    rerender(
+      <WindowedTimeline
+        entries={entries}
+        activeDay="2020-07-08"
+        onNeedNewer={onNeedNewer}
+        preserveAnchor
+      />,
+    );
+
+    expect(window.scrollBy).not.toHaveBeenCalled();
+  });
+
   it("does not cascade into a page fetch when a clamped shift leaves scroll events near the same boundary", () => {
     const onNeedNewer = vi.fn();
     scrollPosition = 200;

@@ -40,3 +40,12 @@ describe("desktop chrome regressions", () => {
     );
   });
 });
+
+describe("reading measure", () => {
+  it("allows a maximum body line exactly three times wider than the previous 536px measure", () => {
+    expect(appCss).toContain("--reading-page-width: 1682px;");
+    expect(appCss).toContain(
+      "width: min(var(--reading-page-width), calc(100vw - var(--date-rail-width) - 92px));",
+    );
+  });
+});

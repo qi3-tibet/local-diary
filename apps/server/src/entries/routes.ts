@@ -48,6 +48,9 @@ export async function registerEntryRoutes(
       return reply.code(400).send({ error: "INVALID_DAY_CURSOR" });
     }
   });
+  server.get("/api/v1/entries/calendar", async () => ({
+    days: entries().listPublishedDays(),
+  }));
   server.get("/api/v1/entries", async () => service().listPublished());
   server.patch<{ Params: { id: string } }>("/api/v1/entries/:id", async (request, reply) => {
     const entry = entries().updatePublished(request.params.id, draftInputSchema.parse(request.body));

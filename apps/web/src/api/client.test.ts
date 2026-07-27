@@ -48,6 +48,23 @@ describe("diary API client", () => {
     );
   });
 
+  it("loads the complete recorded-day index for the calendar", async () => {
+    const request = vi.fn<RequestFn>(async () =>
+      new Response(JSON.stringify({
+        days: [
+          { day: "2026-07-26", totalEntries: 2 },
+          { day: "2026-06-05", totalEntries: 1 },
+        ],
+      }), { status: 200 }),
+    );
+    const client = createApiClient(request);
+
+    await expect(client.listCalendarDays()).resolves.toEqual(["2026-07-26", "2026-06-05"]);
+    expect(request).toHaveBeenCalledWith("/api/v1/entries/calendar", {
+      headers: { accept: "application/json" },
+    });
+  });
+
   it("returns the published entry array without adapting its shape", async () => {
     const entries = [{ id: "entry-1", title: "Kept by the contract" }];
     const request = vi.fn(async () => new Response(JSON.stringify(entries), { status: 200 }));

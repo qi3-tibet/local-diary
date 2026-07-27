@@ -374,7 +374,9 @@ export function WindowedTimeline({
 
   useLayoutEffect(() => {
     const saved = anchor.current;
-    if (preserveAnchor && saved) {
+    if (!preserveAnchor) {
+      anchor.current = undefined;
+    } else if (saved) {
       const node = timelineRef.current?.querySelector<HTMLElement>(
         `[data-entry-id="${CSS.escape(saved.entryId)}"]`,
       );
