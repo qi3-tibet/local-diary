@@ -4,7 +4,7 @@
 
 html {
   scroll-behavior: smooth;
-  scroll-padding-top: 24px;
+  scroll-padding-top: 0;
 }
 
 body {
@@ -477,11 +477,11 @@ button.calendar-day[aria-current="date"] {
 
 .music-card {
   display: grid;
-  grid-template-columns: 58px minmax(0, 1fr) auto;
+  grid-template-columns: 87px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 17px;
+  gap: 26px;
   margin-top: 34px;
-  padding: 17px 0;
+  padding: 22px 0;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   font-family: var(--ui-font);
@@ -496,8 +496,8 @@ button.calendar-day[aria-current="date"] {
 }
 
 .music-cover {
-  width: 58px;
-  height: 58px;
+  width: 87px;
+  height: 87px;
 }
 
 .music-cover img,
@@ -507,7 +507,6 @@ button.calendar-day[aria-current="date"] {
   object-fit: cover;
 }
 
-.music-cover > span::before,
 .floating-cover > span::before {
   position: absolute;
   top: 23%;
@@ -518,7 +517,6 @@ button.calendar-day[aria-current="date"] {
   content: "";
 }
 
-.music-cover > span::after,
 .floating-cover > span::after {
   position: absolute;
   top: 58%;
@@ -535,6 +533,10 @@ button.calendar-day[aria-current="date"] {
 .floating-copy {
   display: grid;
   min-width: 0;
+}
+
+.music-card-copy {
+  gap: 6px;
 }
 
 .music-metadata {
@@ -1518,12 +1520,14 @@ span.management-title {
   }
 
   .music-card {
-    grid-template-columns: 50px minmax(0, 1fr) auto;
+    grid-template-columns: 75px minmax(0, 1fr) auto;
+    gap: 20px;
+    padding: 20px 0;
   }
 
   .music-cover {
-    width: 50px;
-    height: 50px;
+    width: 75px;
+    height: 75px;
   }
 
   .day + .day {

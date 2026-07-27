@@ -22,7 +22,6 @@ export function MusicCard({ music, player, onPlay }: MusicCardProps) {
   return (
     <section className="music-card" aria-label={`Music ${title}`}>
       <div className="music-cover">
-        <span aria-hidden="true" />
         {music.coverUrl ? (
           <img
             src={music.coverUrl}

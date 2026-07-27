@@ -133,7 +133,10 @@ export function App() {
         root.style.scrollBehavior = scrollBehavior;
         restoreScrollBehavior = undefined;
       };
-      target.scrollIntoView({ block: "center", behavior: "auto" });
+      target.scrollIntoView({
+        block: jumpTarget.entryId ? "center" : "start",
+        behavior: "auto",
+      });
       target.focus({ preventScroll: true });
       let previous = window.scrollY;
       let previousTop = target.getBoundingClientRect().top;

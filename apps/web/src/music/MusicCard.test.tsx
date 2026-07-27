@@ -62,7 +62,7 @@ it("keeps unavailable music readable without an interactive play control", () =>
   expect(screen.queryByRole("button", { name: /Play/ })).toBeNull();
 });
 
-it("reveals the solid fallback when stored cover art cannot load", () => {
+it("reveals a plain solid fallback without a note glyph when stored cover art cannot load", () => {
   const { container } = render(
     <MusicCard
       music={{
@@ -84,7 +84,7 @@ it("reveals the solid fallback when stored cover art cannot load", () => {
   );
   const cover = container.querySelector(".music-cover")!;
   const image = cover.querySelector("img")!;
-  expect(cover.querySelector("span")).not.toBeNull();
+  expect(cover.querySelector("span")).toBeNull();
 
   fireEvent.error(image);
   expect(image).toHaveAttribute("hidden");

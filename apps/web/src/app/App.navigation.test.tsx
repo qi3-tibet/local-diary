@@ -167,7 +167,7 @@ describe("App programmatic day navigation", () => {
     frames.delete(retryFrame[0]);
     act(() => retryFrame[1](16));
 
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: "center", behavior: "auto" });
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start", behavior: "auto" });
     expect(document.activeElement).toBe(target);
     const latest = timelineProps.mock.calls.at(-1)?.[0] as { pagingEnabled: boolean };
     expect(latest.pagingEnabled).toBe(false);

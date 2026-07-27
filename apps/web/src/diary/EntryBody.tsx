@@ -15,6 +15,7 @@ type EntryBodyProps = {
 export function DiaryMarkdown({ children }: { children: string }) {
   return (
     <ReactMarkdown
+      remarkPlugins={[remarkHardLineBreaks]}
       urlTransform={(url) => url.startsWith("media:") ? url : defaultUrlTransform(url)}
       components={{
         img: ({ src = "", alt = "" }) => {
@@ -33,6 +34,34 @@ export function DiaryMarkdown({ children }: { children: string }) {
       {children}
     </ReactMarkdown>
   );
+}
+
+type MarkdownNode = {
+  type: string;
+  value?: string;
+  children?: MarkdownNode[];
+  [key: string]: unknown;
+};
+
+function remarkHardLineBreaks() {
+  return (tree: unknown) => {
+    replaceSoftLineBreaks(tree as MarkdownNode);
+  };
+}
+
+function replaceSoftLineBreaks(node: MarkdownNode): void {
+  if (!node.children) return;
+  node.children = node.children.flatMap((child) => {
+    if (child.type !== "text" || !child.value?.includes("\n")) {
+      replaceSoftLineBreaks(child);
+      return [child];
+    }
+    const lines = child.value.split("\n");
+    return lines.flatMap((value, index) => [
+      { ...child, value },
+      ...(index < lines.length - 1 ? [{ type: "break" }] : []),
+    ]);
+  });
 }
 
 export function EntryBody({ entry, onEdit, onTrash, player }: EntryBodyProps) {

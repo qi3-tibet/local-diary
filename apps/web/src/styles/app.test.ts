@@ -5,6 +5,10 @@ import { describe, expect, it } from "vitest";
 const appCss = readFileSync(fileURLToPath(new URL("./app.css", import.meta.url)), "utf8");
 
 describe("responsive anchor offsets", () => {
+  it("places desktop date navigation directly against the viewport top", () => {
+    expect(appCss).toMatch(/html\s*\{[^}]*scroll-padding-top:\s*0;/s);
+  });
+
   it("uses one mobile document offset just beyond the fixed 58px date strip", () => {
     expect(appCss).toContain("scroll-padding-top: 64px;");
     expect(appCss).not.toContain("scroll-margin-top");
@@ -16,6 +20,12 @@ describe("music metadata visual language", () => {
     expect(appCss).toMatch(/\.music-candidate button,\s*\.music-metadata-actions button,/);
     expect(appCss).toMatch(/\.music-candidate-copy\s*\{[^}]*font-family: var\(--body-cn-font\)/s);
     expect(appCss).toMatch(/\.music-metadata-editor\s*\{[^}]*font-family: var\(--ui-font\)/s);
+  });
+
+  it("enlarges the diary cover by exactly one and a half without restoring a note glyph", () => {
+    expect(appCss).toMatch(/\.music-cover\s*\{[^}]*width:\s*87px;[^}]*height:\s*87px;/s);
+    expect(appCss).not.toContain(".music-cover > span::before");
+    expect(appCss).not.toContain(".music-cover > span::after");
   });
 });
 
