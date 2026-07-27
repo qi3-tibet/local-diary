@@ -18,3 +18,25 @@ describe("music metadata visual language", () => {
     expect(appCss).toMatch(/\.music-metadata-editor\s*\{[^}]*font-family: var\(--ui-font\)/s);
   });
 });
+
+describe("desktop chrome regressions", () => {
+  it("gives the desktop date rail enough room for the native date field", () => {
+    expect(appCss).toContain("--date-rail-width: 156px;");
+    expect(appCss).toContain("margin-left: var(--date-rail-width);");
+    expect(appCss).toContain("width: var(--date-rail-width);");
+  });
+
+  it("draws the system theme indicator as one clipped circle", () => {
+    expect(appCss).toMatch(
+      /\.theme-control::before\s*\{[^}]*linear-gradient\(90deg,\s*currentColor 0 50%,\s*transparent 50% 100%\)/s,
+    );
+    expect(appCss).not.toContain(".theme-control::after");
+  });
+
+  it("does not use a bottom border for the fixed top menu hover state", () => {
+    expect(appCss).toMatch(/\.workspace-tools button\s*\{[^}]*border:\s*0;/s);
+    expect(appCss).not.toMatch(
+      /\.workspace-tools button:hover,[^{]*\{[^}]*border-bottom-color/s,
+    );
+  });
+});

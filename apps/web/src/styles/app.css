@@ -57,6 +57,8 @@ textarea::placeholder {
 }
 
 .app-shell {
+  --date-rail-width: 156px;
+
   min-height: 100vh;
   background: var(--paper);
   color: var(--ink);
@@ -68,7 +70,7 @@ textarea::placeholder {
 
 .app-main {
   min-height: 100vh;
-  margin-left: 88px;
+  margin-left: var(--date-rail-width);
 }
 
 .workspace-tools {
@@ -80,7 +82,6 @@ textarea::placeholder {
   gap: 15px;
 }
 
-.workspace-tools button,
 .entry-actions button,
 .editor-actions button,
 .management-actions button,
@@ -98,12 +99,22 @@ textarea::placeholder {
   letter-spacing: 0.12em;
 }
 
+.workspace-tools button {
+  padding: 5px 0 3px;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-family: var(--ui-font);
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+}
+
 .workspace-tools button:disabled {
   cursor: wait;
   opacity: 0.45;
 }
 
-.workspace-tools button:hover,
 .entry-actions button:hover,
 .editor-actions button:hover,
 .management-actions button:hover,
@@ -111,6 +122,10 @@ textarea::placeholder {
 .music-metadata-actions button:hover,
 .management-title:hover {
   border-bottom-color: var(--ochre);
+  color: var(--ink);
+}
+
+.workspace-tools button:hover {
   color: var(--ink);
 }
 
@@ -129,7 +144,7 @@ textarea::placeholder {
   z-index: 10;
   inset: 0 auto 0 0;
   display: flex;
-  width: 88px;
+  width: var(--date-rail-width);
   flex-direction: column;
   background: var(--panel);
   border-right: 1px solid var(--line);
@@ -151,7 +166,7 @@ textarea::placeholder {
 
 .date-jump {
   display: grid;
-  grid-template-columns: 1fr 28px;
+  grid-template-columns: minmax(108px, 1fr) 28px;
   gap: 2px;
   padding: 10px 8px;
   border-bottom: 1px solid var(--line);
@@ -244,27 +259,15 @@ textarea::placeholder {
   display: block;
   width: 14px;
   height: 14px;
-  overflow: hidden;
+  background: linear-gradient(90deg, currentColor 0 50%, transparent 50% 100%);
   border: 1px solid currentColor;
   border-radius: 50%;
   content: "";
   transform: translate(-50%, -50%);
 }
 
-.theme-control::after {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 7px;
-  height: 14px;
-  background: currentColor;
-  content: "";
-  transform: translate(-7px, -7px);
-}
-
-.theme-control[data-preference="light"]::after,
-.theme-control[data-preference="dark"]::after {
-  display: none;
+.theme-control[data-preference="light"]::before {
+  background: transparent;
 }
 
 .theme-control[data-preference="dark"]::before {
@@ -272,7 +275,7 @@ textarea::placeholder {
 }
 
 .reading-page {
-  width: min(610px, calc(100vw - 180px));
+  width: min(610px, calc(100vw - var(--date-rail-width) - 92px));
   margin: 0 auto;
   padding: 54px 0 120px;
 }
@@ -1358,12 +1361,6 @@ span.management-title {
   .theme-control::before {
     width: 12px;
     height: 12px;
-  }
-
-  .theme-control::after {
-    width: 6px;
-    height: 12px;
-    transform: translate(-6px, -6px);
   }
 
   .reading-page {

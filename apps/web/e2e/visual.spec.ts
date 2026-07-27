@@ -76,10 +76,45 @@ test("Fine Scale dark screen matches the approved baseline", async ({ page }) =>
   });
 });
 
-async function setTheme(page: Page, theme: "light" | "dark"): Promise<void> {
+test("desktop controls avoid clipped and trailing chrome", async ({ page }) => {
+  await setTheme(page, "system");
+
+  const dateInput = page.locator(".date-jump input");
+  await expect(dateInput).toBeVisible();
+  const dateInputBox = await dateInput.boundingBox();
+  expect(dateInputBox?.width).toBeGreaterThanOrEqual(108);
+
+  const themeControl = page.locator(".theme-control");
+  await expect(themeControl).toHaveAttribute("data-preference", "system");
+  const themeIndicator = await themeControl.evaluate((element) => {
+    const before = getComputedStyle(element, "::before");
+    const after = getComputedStyle(element, "::after");
+    return {
+      width: before.width,
+      height: before.height,
+      backgroundImage: before.backgroundImage,
+      afterContent: after.content,
+    };
+  });
+  expect(themeIndicator).toMatchObject({
+    width: "14px",
+    height: "14px",
+    afterContent: "none",
+  });
+  expect(themeIndicator.backgroundImage).toContain("linear-gradient");
+
+  const firstMenuButton = page.locator(".workspace-tools button").first();
+  await firstMenuButton.hover();
+  await expect(firstMenuButton).toHaveCSS("border-bottom-width", "0px");
+});
+
+async function setTheme(page: Page, theme: "light" | "dark" | "system"): Promise<void> {
   await page.addInitScript((value) => localStorage.setItem("diary-theme", value), theme);
   await page.goto("/?fixture=visual");
-  await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-theme",
+    theme === "system" ? "light" : theme,
+  );
   await page.evaluate(() => document.fonts.ready);
 }
 
