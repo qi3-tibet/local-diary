@@ -6,7 +6,7 @@ import type {
   RecognitionCandidate,
 } from "@diary/contracts";
 import { useQuery } from "@tanstack/react-query";
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useLayoutEffect, useRef, useState } from "react";
 import { api, type EditableMusic } from "../api/client";
 import { DiaryMarkdown } from "../diary/EntryBody";
 import { ImageInsert } from "./ImageInsert";
@@ -58,6 +58,9 @@ function EditorForm({
   const [musicError, setMusicError] = useState<string>();
   const [error, setError] = useState<string>();
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const previewPane = useRef<HTMLDivElement>(null);
+  const pendingScrollProgress = useRef<number | undefined>(undefined);
+  const editorViewportHeight = useRef<number | undefined>(undefined);
   const uploadEntryId = useRef(entry?.id ?? draftId);
   const latestValue = useRef(initialValue);
   const interactionRevision = useRef(0);
@@ -73,6 +76,33 @@ function EditorForm({
   const isDraft = !entry;
 
   const draftPersistence = useSilentDraft(value, api.saveDraft, isDraft && !submitting);
+
+  useLayoutEffect(() => {
+    const target = preview ? previewPane.current : textarea.current;
+    const progress = pendingScrollProgress.current;
+    if (!target || progress === undefined) return;
+    const restore = () => {
+      const scrollableDistance = Math.max(0, target.scrollHeight - target.clientHeight);
+      target.scrollTop = scrollableDistance * progress;
+    };
+    restore();
+    const frame = window.requestAnimationFrame(restore);
+    pendingScrollProgress.current = undefined;
+    return () => window.cancelAnimationFrame(frame);
+  }, [preview]);
+
+  function togglePreview(): void {
+    const source = preview ? previewPane.current : textarea.current;
+    if (source) {
+      const scrollableDistance = Math.max(0, source.scrollHeight - source.clientHeight);
+      pendingScrollProgress.current = scrollableDistance > 0
+        ? source.scrollTop / scrollableDistance
+        : 0;
+      const measuredHeight = source.getBoundingClientRect().height || source.clientHeight;
+      if (measuredHeight > 0) editorViewportHeight.current = measuredHeight;
+    }
+    setPreview((current) => !current);
+  }
 
   async function insertImage(image: File): Promise<void> {
     const field = textarea.current;
@@ -357,12 +387,19 @@ function EditorForm({
             {!preview && !music ? (
               <MusicAttach disabled={submitting || musicBusy} onSelect={selectMusic} />
             ) : null}
-            <ModeGlyph preview={preview} onToggle={() => setPreview((current) => !current)} />
+            <ModeGlyph preview={preview} onToggle={togglePreview} />
           </div>
         </div>
 
         {preview ? (
-          <div className="editor-preview entry-body" aria-label="Markdown preview">
+          <div
+            className="editor-preview entry-body"
+            ref={previewPane}
+            aria-label="Markdown preview"
+            style={editorViewportHeight.current
+              ? { height: `${editorViewportHeight.current}px` }
+              : undefined}
+          >
             <DiaryMarkdown>{value.markdown}</DiaryMarkdown>
           </div>
         ) : (
@@ -371,6 +408,9 @@ function EditorForm({
             <textarea
               className="entry-body"
               ref={textarea}
+              style={editorViewportHeight.current
+                ? { height: `${editorViewportHeight.current}px` }
+                : undefined}
               aria-label="Markdown body"
               disabled={submitting}
               value={value.markdown}

@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const timelineProps = vi.hoisted(() => vi.fn());
 const dateRailProps = vi.hoisted(() => vi.fn());
 const searchProps = vi.hoisted(() => vi.fn());
+const editorProps = vi.hoisted(() => vi.fn());
 const listDayPage = vi.hoisted(() => vi.fn());
 const listCalendarDays = vi.hoisted(() => vi.fn());
 const renderTimelineSections = vi.hoisted(() => ({ value: false }));
@@ -70,6 +71,12 @@ vi.mock("../search/SearchPanel", () => ({
     return <div data-testid="search-panel" />;
   },
 }));
+vi.mock("../editor/Editor", () => ({
+  Editor: (props: { entry?: Entry; onComplete: (entry: Entry) => void }) => {
+    editorProps(props);
+    return <div data-testid="editor" />;
+  },
+}));
 vi.mock("../music/FloatingPlayer", () => ({ FloatingPlayer: () => null }));
 vi.mock("../settings/BackupSettings", () => ({ BackupSettings: () => null }));
 vi.mock("../settings/RestoreProgress", () => ({ RestoreProgress: () => null }));
@@ -82,6 +89,7 @@ describe("App programmatic day navigation", () => {
     timelineProps.mockClear();
     dateRailProps.mockClear();
     searchProps.mockClear();
+    editorProps.mockClear();
     listDayPage.mockReset();
     listCalendarDays.mockReset();
     listCalendarDays.mockResolvedValue(["2025-07-26", "2025-07-25"]);
@@ -243,6 +251,36 @@ describe("App programmatic day navigation", () => {
         nextCursor: "jump-older",
       });
       await jump;
+    });
+  });
+
+  it("returns from editing to the exact saved entry instead of the newest page", async () => {
+    window.history.replaceState({}, "", "/");
+    renderTimelineSections.value = true;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <App />
+      </QueryClientProvider>,
+    );
+    await screen.findByTestId("timeline");
+
+    act(() => timelineProps.mock.calls.at(-1)![0].onEditEntry(targetEntry));
+    await screen.findByTestId("editor");
+    expect(editorProps.mock.calls.at(-1)![0].entry).toEqual(targetEntry);
+
+    const savedEntry = { ...targetEntry, markdown: "Updated body", edited: true };
+    act(() => editorProps.mock.calls.at(-1)![0].onComplete(savedEntry));
+
+    await screen.findByTestId("timeline");
+    await waitFor(() => expect(listDayPage).toHaveBeenLastCalledWith({ entryId: targetEntry.id }));
+    await waitFor(() => {
+      const latest = timelineProps.mock.calls.at(-1)![0] as {
+        activeDay?: string;
+        pagingEnabled: boolean;
+      };
+      expect(latest.activeDay).toBe("2025-07-26");
+      expect(latest.pagingEnabled).toBe(false);
     });
   });
 

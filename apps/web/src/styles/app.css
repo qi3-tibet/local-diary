@@ -502,9 +502,17 @@ button.calendar-day[aria-current="date"] {
 
 .music-cover img,
 .floating-cover img {
+  display: block;
   width: 100%;
   height: 100%;
+  margin: 0;
   object-fit: cover;
+  object-position: center;
+}
+
+.music-cover img[hidden],
+.floating-cover img[hidden] {
+  display: none;
 }
 
 .floating-cover > span::before {
@@ -776,6 +784,7 @@ button.calendar-day[aria-current="date"] {
 }
 
 .editor-preview {
+  overflow-y: auto;
   min-height: 54vh;
   padding: 20px 0;
   border-top: 1px solid var(--line);

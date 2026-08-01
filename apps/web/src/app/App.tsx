@@ -217,17 +217,23 @@ export function App() {
     }
   }
 
-  function completeEditor(): void {
-    void Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["draft"] }),
-      queryClient.invalidateQueries({ queryKey: ["published-entries"] }),
-      queryClient.invalidateQueries({ queryKey: ["calendar-days"] }),
-      queryClient.invalidateQueries({ queryKey: ["search"] }),
-    ]);
+  function completeEditor(completedEntry: Entry): void {
+    const returnToEditedEntry = Boolean(editingEntry);
     checkedDraftRecovery.current = true;
     setEditingEntry(undefined);
     setManagementError(undefined);
     setView((current) => current === "editor" ? "diary" : current);
+    void Promise.allSettled([
+      queryClient.invalidateQueries({ queryKey: ["draft"] }),
+      queryClient.invalidateQueries({ queryKey: ["published-entries"] }),
+      queryClient.invalidateQueries({ queryKey: ["calendar-days"] }),
+      queryClient.invalidateQueries({ queryKey: ["search"] }),
+    ]).then(() => {
+      if (returnToEditedEntry) {
+        return navigateToEntry(completedEntry, "THE EDITED ENTRY COULD NOT BE OPENED");
+      }
+      return undefined;
+    });
   }
 
   function restoredDiary(): void {
@@ -252,6 +258,10 @@ export function App() {
 
   async function openSearchResult(entry: Entry): Promise<void> {
     showDiary();
+    await navigateToEntry(entry, "THE ENTRY COULD NOT BE OPENED");
+  }
+
+  async function navigateToEntry(entry: Entry, errorMessage: string): Promise<void> {
     if (!entry.publishedAt) return;
     const parts = new Intl.DateTimeFormat("en-CA", {
       timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
@@ -264,7 +274,7 @@ export function App() {
       if (generation !== navigationGeneration.current) return;
       applyDayNavigation(day, next, entry.id);
     } catch {
-      failNavigation(generation, "THE ENTRY COULD NOT BE OPENED");
+      failNavigation(generation, errorMessage);
     }
   }
 

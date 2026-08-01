@@ -27,6 +27,15 @@ describe("music metadata visual language", () => {
     expect(appCss).not.toContain(".music-cover > span::before");
     expect(appCss).not.toContain(".music-cover > span::after");
   });
+
+  it("prevents diary image margins from shifting and clipping album covers", () => {
+    expect(appCss).toMatch(
+      /\.music-cover img,\s*\.floating-cover img\s*\{[^}]*display:\s*block;[^}]*width:\s*100%;[^}]*height:\s*100%;[^}]*margin:\s*0;[^}]*object-fit:\s*cover;[^}]*object-position:\s*center;/s,
+    );
+    expect(appCss).toMatch(
+      /\.music-cover img\[hidden\],\s*\.floating-cover img\[hidden\]\s*\{[^}]*display:\s*none;/s,
+    );
+  });
 });
 
 describe("desktop chrome regressions", () => {
