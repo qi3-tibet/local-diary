@@ -12,6 +12,7 @@ const searchProps = vi.hoisted(() => vi.fn());
 const editorProps = vi.hoisted(() => vi.fn());
 const listDayPage = vi.hoisted(() => vi.fn());
 const listCalendarDays = vi.hoisted(() => vi.fn());
+const getDraft = vi.hoisted(() => vi.fn<() => Promise<Entry | null>>(async () => null));
 const renderTimelineSections = vi.hoisted(() => ({ value: false }));
 const targetEntry = vi.hoisted(() => ({
   id: "00000000-0000-4000-8000-000000000001",
@@ -31,7 +32,7 @@ vi.mock("../api/client", () => ({
   api: {
     listDayPage,
     listCalendarDays,
-    getDraft: vi.fn(async () => null),
+    getDraft,
   },
 }));
 vi.mock("../diary/WindowedTimeline", () => ({
@@ -92,6 +93,8 @@ describe("App programmatic day navigation", () => {
     editorProps.mockClear();
     listDayPage.mockReset();
     listCalendarDays.mockReset();
+    getDraft.mockReset();
+    getDraft.mockResolvedValue(null);
     listCalendarDays.mockResolvedValue(["2025-07-26", "2025-07-25"]);
     listDayPage.mockResolvedValue({
       days: [{ day: "2025-07-26", totalEntries: 1, entries: [targetEntry] }],
@@ -131,6 +134,18 @@ describe("App programmatic day navigation", () => {
     };
     expect(first.pagingEnabled).toBe(false);
     expect(first.navigationResetKey).toBeGreaterThan(0);
+  });
+
+  it("keeps the timeline open when a saved draft exists at startup", async () => {
+    window.history.replaceState({}, "", "/");
+    getDraft.mockResolvedValue({ ...targetEntry, state: "draft", publishedAt: null });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(<QueryClientProvider client={queryClient}><App /></QueryClientProvider>);
+
+    await screen.findByTestId("timeline");
+    await waitFor(() => expect(getDraft).toHaveBeenCalled());
+    expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
   });
 
   it("keeps retrying the locked jump when its section mounts after the first animation frame", async () => {
