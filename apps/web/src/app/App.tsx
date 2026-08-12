@@ -35,7 +35,6 @@ export function App() {
   const [managementError, setManagementError] = useState<string>();
   const [restoreState, setRestoreState] = useState<RestoreState>();
   const [backupWarning, setBackupWarning] = useState<string>();
-  const checkedDraftRecovery = useRef(false);
   const handledRequestedDay = useRef(false);
   const navigationGeneration = useRef(0);
   const navigationLocked = useRef(false);
@@ -168,21 +167,13 @@ export function App() {
     };
   }, [dayPage, jumpTarget, navigationReady]);
 
-  useEffect(() => {
-    if (!draftRecoveryQuery.isSuccess || checkedDraftRecovery.current) return;
-    checkedDraftRecovery.current = true;
-    if (draftRecoveryQuery.data) setView("editor");
-  }, [draftRecoveryQuery.data, draftRecoveryQuery.isSuccess]);
-
   function showDiary(): void {
-    checkedDraftRecovery.current = true;
     setEditingEntry(undefined);
     setManagementError(undefined);
     setView("diary");
   }
 
   function editEntry(entry: Entry): void {
-    checkedDraftRecovery.current = true;
     setEditingEntry(entry);
     setManagementError(undefined);
     setView("editor");
@@ -219,7 +210,6 @@ export function App() {
 
   function completeEditor(completedEntry: Entry): void {
     const returnToEditedEntry = Boolean(editingEntry);
-    checkedDraftRecovery.current = true;
     setEditingEntry(undefined);
     setManagementError(undefined);
     setView((current) => current === "editor" ? "diary" : current);
@@ -248,7 +238,6 @@ export function App() {
   }
 
   function openBackupRecovery(): void {
-    checkedDraftRecovery.current = true;
     setView("settings");
     window.requestAnimationFrame(() => {
       const button = document.querySelector<HTMLButtonElement>('[aria-label="Choose backup location"]');
@@ -453,7 +442,6 @@ export function App() {
             aria-label="New entry"
             disabled={restoreLocked}
             onClick={() => {
-              checkedDraftRecovery.current = true;
               setEditingEntry(undefined);
               setView("editor");
               window.requestAnimationFrame(() => {
@@ -464,19 +452,16 @@ export function App() {
             NEW ENTRY
           </button>
           <button type="button" aria-label="Search" disabled={restoreLocked} onClick={() => {
-            checkedDraftRecovery.current = true;
             setView("search");
           }}>
             SEARCH
           </button>
           <button type="button" aria-label="Trash" disabled={restoreLocked} onClick={() => {
-            checkedDraftRecovery.current = true;
             setView("trash");
           }}>
             TRASH
           </button>
           <button type="button" aria-label="Settings" disabled={restoreLocked} onClick={() => {
-            checkedDraftRecovery.current = true;
             setView("settings");
           }}>
             SETTINGS
