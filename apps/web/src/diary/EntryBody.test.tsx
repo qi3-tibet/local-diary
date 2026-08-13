@@ -25,3 +25,16 @@ it("does not append hard-break spacing inside fenced code blocks", () => {
   expect(container.querySelector("code")?.textContent).toBe("first\nsecond\n");
   expect(container.querySelector("pre br")).toBeNull();
 });
+
+it("keeps inline code inline and renders fenced code outside the Markdown pre wrapper", () => {
+  const { container } = render(
+    <DiaryMarkdown>{"Text with `inline` code.\n\n```ts\nconst answer = 42;\n```"}</DiaryMarkdown>,
+  );
+
+  const inline = container.querySelector("p code");
+  expect(inline?.textContent).toBe("inline");
+  expect(inline?.parentElement?.tagName).toBe("P");
+  expect(container.querySelector("p section")).toBeNull();
+  expect(container.querySelector("pre section")).toBeNull();
+  expect(container.querySelector(".entry-code-block")).toBeTruthy();
+});

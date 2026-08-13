@@ -1,6 +1,8 @@
 import type { Entry } from "@diary/contracts";
+import { Children, isValidElement, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import { api } from "../api/client";
+import { CodeBlock } from "./CodeBlock";
 import { MusicCard } from "../music/MusicCard";
 import type { PlayerStore } from "../music/player-store";
 import { formatEntryTime } from "./date-groups";
@@ -18,6 +20,8 @@ export function DiaryMarkdown({ children }: { children: string }) {
       remarkPlugins={[remarkHardLineBreaks]}
       urlTransform={(url) => url.startsWith("media:") ? url : defaultUrlTransform(url)}
       components={{
+        code: InlineCode,
+        pre: MarkdownPre,
         img: ({ src = "", alt = "" }) => {
           const mediaId = src.startsWith("media:") ? src.slice(6) : "";
           return (
@@ -34,6 +38,17 @@ export function DiaryMarkdown({ children }: { children: string }) {
       {children}
     </ReactMarkdown>
   );
+}
+
+function InlineCode({ children, className }: { children?: ReactNode; className?: string }) {
+  return <code className={className}>{children}</code>;
+}
+
+function MarkdownPre({ children }: { children?: ReactNode }) {
+  const child = Children.toArray(children).find(isValidElement);
+  if (!child) return <pre>{children}</pre>;
+  const props = child.props as { children?: ReactNode; className?: string };
+  return <CodeBlock className={props.className}>{props.children}</CodeBlock>;
 }
 
 type MarkdownNode = {

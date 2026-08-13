@@ -424,7 +424,7 @@ button.calendar-day[aria-current="date"] {
 
 .entry-body {
   min-width: 0;
-  font-family: var(--body-cn-font);
+  font-family: var(--body-content-font);
   font-size: 1rem;
   line-height: 2.08;
   overflow-wrap: anywhere;
@@ -463,8 +463,79 @@ button.calendar-day[aria-current="date"] {
   text-underline-offset: 0.2em;
 }
 
-.entry-body code {
-  font-size: 0.9em;
+.entry-body :not(pre) > code {
+  padding: 0.08em 0.32em;
+  border: 1px solid var(--code-border);
+  border-radius: 3px;
+  background: var(--code-header);
+  font-family: var(--code-font);
+  font-size: 0.84em;
+  line-height: 1.45;
+}
+
+.entry-code-block {
+  position: relative;
+  margin: 1.55em 0;
+  overflow: hidden;
+  border: 1px solid var(--code-border);
+  border-radius: 5px;
+  background: var(--code-surface);
+  font-family: var(--code-font);
+  font-size: 0.86em;
+  line-height: 1.65;
+}
+
+.entry-code-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 40px;
+  padding: 0 7px 0 11px;
+  border-bottom: 1px solid var(--code-border);
+  background: var(--code-header);
+  color: var(--muted);
+  font-family: var(--code-font);
+  font-size: 0.64rem;
+  letter-spacing: 0.08em;
+}
+
+.entry-code-copy {
+  min-width: 40px;
+  min-height: 40px;
+  padding: 3px 7px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  letter-spacing: inherit;
+  opacity: 1;
+  transition: background-color 120ms ease;
+}
+
+.entry-code-copy:hover,
+.entry-code-copy:focus-visible {
+  background: color-mix(in srgb, var(--ink), transparent 90%);
+}
+
+.entry-code-highlight pre,
+.entry-code-block > pre {
+  margin: 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  background: transparent !important;
+  color: var(--ink);
+}
+
+.entry-code-highlight code,
+.entry-code-block > pre > code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
 }
 
 .entry-body img {
@@ -548,7 +619,7 @@ button.calendar-day[aria-current="date"] {
 }
 
 .music-metadata {
-  font-family: var(--body-cn-font);
+  font-family: var(--body-content-font);
 }
 
 .music-card-copy strong,
@@ -655,7 +726,7 @@ button.calendar-day[aria-current="date"] {
 }
 
 .floating-copy strong {
-  font-family: var(--body-cn-font);
+  font-family: var(--body-content-font);
   font-size: 0.78rem;
 }
 
@@ -755,11 +826,11 @@ button.calendar-day[aria-current="date"] {
 }
 
 .editor-title-field input {
-  font-family: var(--body-cn-font);
+  font-family: var(--body-content-font);
 }
 
 .entry-title-index {
-  font-family: var(--body-cn-font);
+  font-family: var(--body-content-font);
 }
 
 .editor-title-field input:focus,
@@ -777,7 +848,7 @@ button.calendar-day[aria-current="date"] {
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   color: var(--ink);
-  font-family: var(--body-cn-font);
+  font-family: var(--body-content-font);
   font-size: 1rem;
   line-height: 2;
   outline: 0;
@@ -979,7 +1050,7 @@ button.calendar-day[aria-current="date"] {
   flex-wrap: wrap;
   gap: 5px 12px;
   color: var(--muted);
-  font-family: var(--body-cn-font);
+  font-family: var(--body-content-font);
   font-size: 0.8rem;
 }
 
@@ -1009,7 +1080,7 @@ button.calendar-day[aria-current="date"] {
   border-bottom: 1px solid var(--line);
   border-radius: 0;
   color: var(--ink);
-  font-family: var(--body-cn-font);
+  font-family: var(--body-content-font);
   font-size: 0.95rem;
   outline: 0;
 }
@@ -1084,7 +1155,7 @@ button.calendar-day[aria-current="date"] {
 .management-title {
   justify-self: start;
   color: var(--ink);
-  font-family: var(--body-cn-font);
+  font-family: var(--body-content-font);
   font-size: 1rem;
   letter-spacing: 0;
   text-align: left;

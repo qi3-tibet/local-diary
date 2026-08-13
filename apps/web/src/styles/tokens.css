@@ -1,6 +1,22 @@
 @import "@fontsource/noto-serif-sc/chinese-simplified-400.css";
 @import "@fontsource/noto-serif-sc/chinese-simplified-600.css";
 
+@font-face {
+  font-family: "JetBrainsMono Nerd Font Mono";
+  src: url("../assets/fonts/JetBrainsMonoNerdFontMono-Regular.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrainsMono Nerd Font Mono";
+  src: url("../assets/fonts/JetBrainsMonoNerdFontMono-SemiBold.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+
 :root {
   --paper: #f2eee6;
   --panel: #e9e3d8;
@@ -10,6 +26,11 @@
   --ochre: #a87442;
   --ui-font: Georgia, "Times New Roman", serif;
   --body-cn-font: "Noto Serif SC", "Songti SC", SimSun, serif;
+  --body-content-font: Georgia, "Noto Serif SC", "Songti SC", SimSun, serif;
+  --code-font: "JetBrainsMono Nerd Font Mono", Consolas, monospace;
+  --code-surface: #f6f8fa;
+  --code-border: #d0d7de;
+  --code-header: #eaeef2;
 }
 
 [data-theme="dark"] {
@@ -19,4 +40,7 @@
   --muted: #aaa298;
   --line: #3b3732;
   --ochre: #c8955f;
+  --code-surface: #1e1e1e;
+  --code-border: #3c3c3c;
+  --code-header: #252526;
 }

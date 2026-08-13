@@ -27,11 +27,11 @@
 - Modify: `apps/web/src/styles/app.css`
 - Test: `apps/web/src/styles/language-fonts.test.ts`
 
-- [ ] Write CSS assertions for the content font stack, local `@font-face` declarations, and inline-code monospace styling.
-- [ ] Copy the installed regular and semibold terminal-font files, preserving the upstream licence.
-- [ ] Define `--body-content-font`, `--code-font`, and light/dark code tokens; use the content stack on the approved diary-content surfaces.
-- [ ] Style inline code and fenced-code containers using the local font and accessible theme colours.
-- [ ] Run `pnpm --filter @diary/web test -- language-fonts.test.ts`.
+- [x] Write CSS assertions for the content font stack, local `@font-face` declarations, and inline-code monospace styling.
+- [x] Copy the installed regular and semibold terminal-font files, preserving the upstream licence.
+- [x] Define `--body-content-font`, `--code-font`, and light/dark code tokens; use the content stack on the approved diary-content surfaces.
+- [x] Style inline code and fenced-code containers using the local font and accessible theme colours.
+- [x] Run `pnpm --filter @diary/web test -- language-fonts.test.ts`.
 
 ### Task 2: Add safe code-block rendering
 
@@ -42,10 +42,10 @@
 - Modify: `apps/web/package.json`
 - Modify: `pnpm-lock.yaml`
 
-- [ ] Add red tests for supported-language highlighting, unsupported-language fallback, language labels, and Clipboard API copying.
-- [ ] Add Shiki and implement a focused renderer for fenced Markdown code; normalise aliases and escape unknown values by rendering text only.
-- [ ] Register the renderer through `react-markdown` while preserving current image and hard-line-break behavior.
-- [ ] Run `pnpm --filter @diary/web test -- CodeBlock.test.tsx EntryBody.test.tsx`.
+- [x] Add red tests for supported-language highlighting, unsupported-language fallback, language labels, and Clipboard API copying.
+- [x] Add Shiki and implement a focused renderer for fenced Markdown code; normalise aliases and escape unknown values by rendering text only.
+- [x] Register the renderer through `react-markdown` while preserving current image and hard-line-break behavior.
+- [x] Run `pnpm --filter @diary/web test -- CodeBlock.test.tsx EntryBody.test.tsx`.
 
 ### Task 3: Verify the integrated reader
 
@@ -53,6 +53,6 @@
 - Modify: `apps/web/src/diary/EntryBody.test.tsx`
 - Modify: `apps/web/src/styles/app.test.ts`
 
-- [ ] Add coverage showing inline code remains separate from fenced code and theme-specific class hooks exist.
-- [ ] Run web unit tests, typecheck, and production build.
-- [ ] Inspect the built asset list to confirm packaged font files are emitted.
+- [x] Add coverage showing inline code remains separate from fenced code and theme-specific class hooks exist.
+- [x] Run web unit tests, typecheck, and production build.
+- [x] Inspect the built asset list to confirm packaged font files are emitted.

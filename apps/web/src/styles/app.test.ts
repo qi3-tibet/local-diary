@@ -18,7 +18,7 @@ describe("responsive anchor offsets", () => {
 describe("music metadata visual language", () => {
   it("shares the plain Georgia text-button treatment and reserves the body serif for music content", () => {
     expect(appCss).toMatch(/\.music-candidate button,\s*\.music-metadata-actions button,/);
-    expect(appCss).toMatch(/\.music-candidate-copy\s*\{[^}]*font-family: var\(--body-cn-font\)/s);
+    expect(appCss).toMatch(/\.music-candidate-copy\s*\{[^}]*font-family: var\(--body-content-font\)/s);
     expect(appCss).toMatch(/\.music-metadata-editor\s*\{[^}]*font-family: var\(--ui-font\)/s);
   });
 
