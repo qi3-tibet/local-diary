@@ -16,9 +16,6 @@ import type { RestoreState } from "./RestoreProgress";
 
 declare global {
   interface Window {
-    diaryDesktop?: {
-      chooseBackupDirectory(): Promise<string | null>;
-    };
     showDirectoryPicker?: (options?: {
       id?: string;
       mode?: "read" | "readwrite";

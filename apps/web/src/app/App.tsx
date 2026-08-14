@@ -20,6 +20,8 @@ import { FloatingPlayer } from "../music/FloatingPlayer";
 import { getBrowserPlayerStore } from "../music/player-store";
 import { BackupSettings } from "../settings/BackupSettings";
 import { RestoreProgress, type RestoreState } from "../settings/RestoreProgress";
+import { useFlushBeforeClose } from "../desktop/close-bridge";
+import { MaterialSymbol } from "../icons/MaterialSymbol";
 
 type View = "diary" | "editor" | "search" | "trash" | "settings";
 type JumpTarget = {
@@ -35,6 +37,8 @@ export function App() {
   const [managementError, setManagementError] = useState<string>();
   const [restoreState, setRestoreState] = useState<RestoreState>();
   const [backupWarning, setBackupWarning] = useState<string>();
+  const editorLeave = useRef<(() => Promise<boolean>) | undefined>(undefined);
+  const pendingEditorLeave = useRef<Promise<boolean> | undefined>(undefined);
   const handledRequestedDay = useRef(false);
   const navigationGeneration = useRef(0);
   const navigationLocked = useRef(false);
@@ -167,10 +171,60 @@ export function App() {
     };
   }, [dayPage, jumpTarget, navigationReady]);
 
-  function showDiary(): void {
-    setEditingEntry(undefined);
-    setManagementError(undefined);
-    setView("diary");
+  async function requestEditorLeave(): Promise<boolean> {
+    if (view !== "editor") return true;
+    let leave = pendingEditorLeave.current;
+    if (!leave) {
+      leave = Promise.resolve(editorLeave.current ? editorLeave.current() : true)
+        .catch(() => false)
+        .finally(() => {
+          if (pendingEditorLeave.current === leave) pendingEditorLeave.current = undefined;
+        });
+      pendingEditorLeave.current = leave;
+    }
+    return leave;
+  }
+
+  async function leaveEditorThen(action: () => void | Promise<void>): Promise<void> {
+    if (await requestEditorLeave()) await action();
+  }
+
+  useFlushBeforeClose(requestEditorLeave);
+
+  function showDiary(): Promise<void> {
+    return leaveEditorThen(() => {
+      setEditingEntry(undefined);
+      setManagementError(undefined);
+      setView("diary");
+    });
+  }
+
+  function showNewEntry(): Promise<void> {
+    return leaveEditorThen(() => {
+      setEditingEntry(undefined);
+      setView("editor");
+      window.requestAnimationFrame(() => {
+        document.querySelector<HTMLInputElement>('[aria-label="Title"]')?.focus();
+      });
+    });
+  }
+
+  function showSearch(): Promise<void> {
+    return leaveEditorThen(() => {
+      setView("search");
+    });
+  }
+
+  function showTrash(): Promise<void> {
+    return leaveEditorThen(() => {
+      setView("trash");
+    });
+  }
+
+  function showSettings(): Promise<void> {
+    return leaveEditorThen(() => {
+      setView("settings");
+    });
   }
 
   function editEntry(entry: Entry): void {
@@ -238,10 +292,12 @@ export function App() {
   }
 
   function openBackupRecovery(): void {
-    setView("settings");
-    window.requestAnimationFrame(() => {
-      const button = document.querySelector<HTMLButtonElement>('[aria-label="Choose backup location"]');
-      button?.focus();
+    void leaveEditorThen(() => {
+      setView("settings");
+      window.requestAnimationFrame(() => {
+        const button = document.querySelector<HTMLButtonElement>('[aria-label="Choose backup location"]');
+        button?.focus();
+      });
     });
   }
 
@@ -379,6 +435,12 @@ export function App() {
         entry={editingEntry}
         onCancel={showDiary}
         onComplete={completeEditor}
+        onRegisterLeave={(leave) => {
+          editorLeave.current = leave;
+          return () => {
+            if (editorLeave.current === leave) editorLeave.current = undefined;
+          };
+        }}
       />
     );
   } else if (view === "search") {
@@ -436,35 +498,27 @@ export function App() {
       />
       <div className="app-main">
         <nav className="workspace-tools" aria-label="Diary tools">
-          <button type="button" aria-label="Diary" disabled={restoreLocked} onClick={showDiary}>DIARY</button>
+          <button type="button" aria-current={view === "diary" ? "page" : undefined} aria-label="Diary" title="Diary" disabled={restoreLocked} onClick={() => void showDiary()}>
+            <MaterialSymbol name="home" />
+          </button>
           <button
             type="button"
+            aria-current={view === "editor" ? "page" : undefined}
             aria-label="New entry"
+            title="New entry"
             disabled={restoreLocked}
-            onClick={() => {
-              setEditingEntry(undefined);
-              setView("editor");
-              window.requestAnimationFrame(() => {
-                document.querySelector<HTMLInputElement>('[aria-label="Title"]')?.focus();
-              });
-            }}
+            onClick={() => void showNewEntry()}
           >
-            NEW ENTRY
+            <MaterialSymbol name="edit_square" />
           </button>
-          <button type="button" aria-label="Search" disabled={restoreLocked} onClick={() => {
-            setView("search");
-          }}>
-            SEARCH
+          <button type="button" aria-current={view === "search" ? "page" : undefined} aria-label="Search" title="Search" disabled={restoreLocked} onClick={() => void showSearch()}>
+            <MaterialSymbol name="search" />
           </button>
-          <button type="button" aria-label="Trash" disabled={restoreLocked} onClick={() => {
-            setView("trash");
-          }}>
-            TRASH
+          <button type="button" aria-current={view === "trash" ? "page" : undefined} aria-label="Trash" title="Trash" disabled={restoreLocked} onClick={() => void showTrash()}>
+            <MaterialSymbol name="delete" />
           </button>
-          <button type="button" aria-label="Settings" disabled={restoreLocked} onClick={() => {
-            setView("settings");
-          }}>
-            SETTINGS
+          <button type="button" aria-current={view === "settings" ? "page" : undefined} aria-label="Settings" title="Settings" disabled={restoreLocked} onClick={() => void showSettings()}>
+            <MaterialSymbol name="settings" />
           </button>
         </nav>
         {managementError ? (

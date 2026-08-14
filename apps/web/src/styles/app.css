@@ -101,14 +101,15 @@ textarea::placeholder {
 }
 
 .workspace-tools button {
-  padding: 5px 0 3px;
+  display: grid;
+  width: 40px;
+  height: 40px;
+  padding: 0;
   cursor: pointer;
+  place-items: center;
   background: transparent;
   border: 0;
   color: var(--muted);
-  font-family: var(--ui-font);
-  font-size: 0.58rem;
-  letter-spacing: 0.12em;
 }
 
 .workspace-tools button:disabled {
@@ -126,8 +127,13 @@ textarea::placeholder {
   color: var(--ink);
 }
 
-.workspace-tools button:hover {
+.workspace-tools button:hover,
+.workspace-tools button:focus-visible {
   color: var(--ink);
+}
+
+.workspace-tools button[aria-current="page"] {
+  color: var(--ochre);
 }
 
 .workspace-error {
@@ -872,16 +878,27 @@ button.calendar-day[aria-current="date"] {
   border-bottom: 1px solid var(--line);
 }
 
-.mode-glyph {
+.material-symbol {
+  display: block;
+  font-family: "Material Symbols Rounded";
+  font-size: 24px;
+  font-variation-settings: "FILL" 1, "wght" 500, "GRAD" 0, "opsz" 24;
+  line-height: 1;
+  speak: never;
+}
+
+.mode-glyph,
+.image-glyph,
+.music-attach-glyph {
   display: grid;
   width: 40px;
   height: 40px;
-  padding: 11px;
+  padding: 0;
   cursor: pointer;
-  grid-template-columns: 1fr 1fr;
-  gap: 3px;
+  place-items: center;
   background: transparent;
   border: 1px solid var(--line);
+  color: var(--muted);
 }
 
 .image-insert {
@@ -890,17 +907,6 @@ button.calendar-day[aria-current="date"] {
 
 .music-attach {
   position: relative;
-}
-
-.image-glyph {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  padding: 12px;
-  cursor: pointer;
-  place-items: center;
-  background: transparent;
-  border: 1px solid var(--line);
 }
 
 .image-glyph:disabled {
@@ -913,45 +919,6 @@ button.calendar-day[aria-current="date"] {
   opacity: 0.5;
 }
 
-.music-note-stem {
-  position: absolute;
-  top: 12px;
-  left: 20px;
-  width: 1px;
-  height: 11px;
-  background: var(--muted);
-}
-
-.music-note-head {
-  position: absolute;
-  top: 21px;
-  left: 14px;
-  width: 7px;
-  height: 5px;
-  border: 1px solid var(--ochre);
-  border-radius: 50%;
-  transform: rotate(-15deg);
-}
-
-.image-glyph-frame {
-  position: relative;
-  display: block;
-  width: 14px;
-  height: 12px;
-  border: 1px solid var(--muted);
-}
-
-.image-glyph-mark {
-  position: absolute;
-  right: 2px;
-  bottom: 2px;
-  width: 7px;
-  height: 7px;
-  border-right: 1px solid var(--ochre);
-  border-bottom: 1px solid var(--ochre);
-  transform: skew(-24deg);
-}
-
 .image-insert-error {
   position: absolute;
   top: calc(100% + 8px);
@@ -962,14 +929,13 @@ button.calendar-day[aria-current="date"] {
   letter-spacing: 0.1em;
 }
 
-.glyph-square {
-  display: block;
-  border: 1px solid var(--muted);
-}
-
-.glyph-square.filled {
-  background: var(--ochre);
-  border-color: var(--ochre);
+.mode-glyph:hover,
+.mode-glyph:focus-visible,
+.image-glyph:hover,
+.image-glyph:focus-visible,
+.music-attach-glyph:hover,
+.music-attach-glyph:focus-visible {
+  color: var(--ink);
 }
 
 .editor-error,

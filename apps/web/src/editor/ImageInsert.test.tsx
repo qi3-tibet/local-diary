@@ -15,9 +15,10 @@ describe("ImageInsert", () => {
     expect(screen.getByRole("button", { name: "Insert image" })).toBeEnabled();
   });
 
-  it("disables its geometric control while the editor is submitting", () => {
+  it("uses the requested Material Symbols ligature and disables it while submitting", () => {
     render(<ImageInsert disabled onSelect={vi.fn()} />);
 
     expect(screen.getByRole("button", { name: "Insert image" })).toBeDisabled();
+    expect(screen.getByText("add_photo_alternate")).toHaveClass("material-symbol");
   });
 });

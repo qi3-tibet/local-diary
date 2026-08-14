@@ -2,9 +2,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const appCss = readFileSync(fileURLToPath(new URL("./app.css", import.meta.url)), "utf8");
+const appCss = readFileSync(fileURLToPath(new URL("./app.css", import.meta.url)), "utf8").replace(/\r\n/gu, "\n");
 const tokensCss = readFileSync(fileURLToPath(new URL("./tokens.css", import.meta.url)), "utf8");
 const fontLicense = fileURLToPath(new URL("../../public/licenses/JetBrainsMono-NerdFont.txt", import.meta.url));
+const materialSymbolsFont = fileURLToPath(new URL("../assets/fonts/MaterialSymbolsRounded.woff2", import.meta.url));
+const materialSymbolsLicense = fileURLToPath(new URL("../assets/fonts/LICENSE-Material-Symbols.txt", import.meta.url));
 
 function ruleFor(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -12,6 +14,15 @@ function ruleFor(selector: string): string {
 }
 
 describe("offline language typography", () => {
+  it("packages Material Symbols Rounded locally with its Apache 2.0 license", () => {
+    expect(tokensCss).toContain('font-family: "Material Symbols Rounded"');
+    expect(tokensCss).toContain('url("../assets/fonts/MaterialSymbolsRounded.woff2") format("woff2")');
+    expect(existsSync(materialSymbolsFont)).toBe(true);
+    expect(existsSync(materialSymbolsLicense)).toBe(true);
+    expect(readFileSync(materialSymbolsLicense, "utf8")).toContain("Apache License");
+    expect(tokensCss).not.toMatch(/fonts\.googleapis\.com|fonts\.gstatic\.com/u);
+  });
+
   it("packages only the Noto Serif SC weights used by diary content", () => {
     expect(tokensCss).toContain(
       '@import "@fontsource/noto-serif-sc/chinese-simplified-400.css";',
