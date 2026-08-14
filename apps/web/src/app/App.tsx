@@ -167,7 +167,7 @@ export function App() {
     };
   }, [dayPage, jumpTarget, navigationReady]);
 
-  function showDiary(): void {
+  async function showDiary(): Promise<void> {
     setEditingEntry(undefined);
     setManagementError(undefined);
     setView("diary");

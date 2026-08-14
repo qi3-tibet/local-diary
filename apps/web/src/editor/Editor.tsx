@@ -5,8 +5,8 @@ import type {
   MusicMetadataOverride,
   RecognitionCandidate,
 } from "@diary/contracts";
-import { useQuery } from "@tanstack/react-query";
-import { type FormEvent, useLayoutEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { type FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, type EditableMusic } from "../api/client";
 import { DiaryMarkdown } from "../diary/EntryBody";
 import { ImageInsert } from "./ImageInsert";
@@ -30,14 +30,16 @@ const emptyDraft: DraftInput = {
 
 type EditorProps = {
   entry?: Entry;
-  onCancel(): void;
+  onCancel(): Promise<void>;
   onComplete(entry: Entry): void;
+  onRegisterLeave?(leave: () => Promise<boolean>): () => void;
 };
 
 type EditorFormProps = EditorProps & {
   initialValue: DraftInput;
   draftId?: string;
   initialMusic?: EntryMusic | null;
+  onDraftPersisted(savedDraft: Entry): void;
 };
 
 function EditorForm({
@@ -47,6 +49,8 @@ function EditorForm({
   initialMusic,
   onCancel,
   onComplete,
+  onRegisterLeave,
+  onDraftPersisted,
 }: EditorFormProps) {
   const [value, setValue] = useState(initialValue);
   const [preview, setPreview] = useState(false);
@@ -72,7 +76,8 @@ function EditorForm({
   const pendingInputRange = useRef<TextRange | null>(null);
   const pendingUpload = useRef<Promise<void> | null>(null);
   const pendingMusic = useRef<Promise<void> | null>(null);
-  const draftChanged = useRef(false);
+  const uploadFailed = useRef(false);
+  const musicOperationFailed = useRef(false);
   const isDraft = !entry;
 
   const draftPersistence = useSilentDraft(value, api.saveDraft, isDraft && !submitting);
@@ -133,7 +138,6 @@ function EditorForm({
         markdown,
       );
       const nextValue = { ...latestValue.current, markdown: insertion.value };
-      draftChanged.current = true;
       latestValue.current = nextValue;
       setValue(nextValue);
       uploadAnchor.current = null;
@@ -164,6 +168,10 @@ function EditorForm({
       setUploading(true);
       try {
         await insertImage(image);
+        uploadFailed.current = false;
+      } catch (error) {
+        uploadFailed.current = true;
+        throw error;
       } finally {
         if (pendingUpload.current === operation) {
           pendingUpload.current = null;
@@ -182,6 +190,10 @@ function EditorForm({
       setMusicError(undefined);
       try {
         await work();
+        musicOperationFailed.current = false;
+      } catch (error) {
+        musicOperationFailed.current = true;
+        throw error;
       } finally {
         if (pendingMusic.current === operation) {
           pendingMusic.current = null;
@@ -199,7 +211,6 @@ function EditorForm({
         ?? (await api.saveDraft(latestValue.current)).id;
       uploadEntryId.current = entryId;
       const attached = await api.uploadMusic(entryId, file);
-      draftChanged.current = true;
       const withFilename = {
         ...attached,
         originalFilename: attached.originalFilename ?? file.name,
@@ -222,7 +233,6 @@ function EditorForm({
       const entryId = uploadEntryId.current;
       if (!entryId) return;
       const updated = await api.patchMusicMetadata(entryId, overrides);
-      draftChanged.current = true;
       setMusic((current) => current ? { ...current, ...updated } : updated);
       setMusicCandidates(updated.candidates ?? []);
     }).catch(() => {
@@ -235,7 +245,6 @@ function EditorForm({
       const entryId = uploadEntryId.current;
       if (!entryId) return;
       const updated = await api.selectMusicCandidate(entryId, candidateId);
-      draftChanged.current = true;
       setMusic((current) => current ? { ...current, ...updated } : updated);
       setMusicCandidates([]);
     }).catch(() => {
@@ -249,7 +258,6 @@ function EditorForm({
       if (!entryId) return;
       const cover = await api.uploadImage(entryId, file);
       const updated = await api.patchMusicMetadata(entryId, { coverMediaId: cover.mediaId });
-      draftChanged.current = true;
       setMusic((current) => current ? { ...current, ...updated } : updated);
       setMusicCandidates(updated.candidates ?? []);
     }).catch(() => {
@@ -262,7 +270,6 @@ function EditorForm({
       const entryId = uploadEntryId.current;
       if (!entryId) return;
       const recognized = await api.recognizeMusic(entryId);
-      draftChanged.current = true;
       setMusic((current) => current ? { ...current, ...recognized } : recognized);
       setMusicCandidates(recognized.candidates ?? []);
     }).catch(() => {
@@ -271,14 +278,12 @@ function EditorForm({
   }
 
   function changeTitle(title: string): void {
-    draftChanged.current = true;
     const nextValue = { ...latestValue.current, title };
     latestValue.current = nextValue;
     setValue(nextValue);
   }
 
   function changeMarkdown(markdown: string): void {
-    draftChanged.current = true;
     const current = latestValue.current;
     if (uploadAnchor.current) {
       const inputRange = pendingInputRange.current;
@@ -338,27 +343,35 @@ function EditorForm({
 
   const busy = uploading || musicBusy || submitting;
 
-  async function cancel(): Promise<void> {
-    if (busy) return;
+  async function leaveDraft(): Promise<boolean> {
     if (!isDraft) {
-      onCancel();
-      return;
-    }
-    if (!draftChanged.current) {
-      onCancel();
-      return;
+      return true;
     }
     setSubmitting(true);
     setError(undefined);
     try {
       await Promise.all([pendingUpload.current, pendingMusic.current]);
-      await draftPersistence.finalize(latestValue.current);
-      onCancel();
+      if (uploadFailed.current || musicOperationFailed.current) throw new Error("MEDIA_OPERATION_FAILED");
+      const savedDraft = await draftPersistence.finalize(latestValue.current);
+      if (savedDraft) onDraftPersisted(savedDraft);
+      return true;
     } catch {
       draftPersistence.resume();
       setError("THE DRAFT COULD NOT BE SAVED");
       setSubmitting(false);
+      return false;
     }
+  }
+
+  useEffect(() => onRegisterLeave?.(isDraft ? leaveDraft : async () => true), [
+    isDraft,
+    leaveDraft,
+    onRegisterLeave,
+  ]);
+
+  async function cancel(): Promise<void> {
+    if (busy) return;
+    if (await leaveDraft()) await onCancel();
   }
 
   return (
@@ -474,6 +487,7 @@ function EditorForm({
 }
 
 export function Editor(props: EditorProps) {
+  const queryClient = useQueryClient();
   const draftQuery = useQuery({
     queryKey: ["draft"],
     queryFn: api.getDraft,
@@ -484,6 +498,9 @@ export function Editor(props: EditorProps) {
     return (
       <EditorForm
         {...props}
+        onDraftPersisted={(savedDraft) => {
+          queryClient.setQueryData(["draft"], savedDraft);
+        }}
         initialValue={{
           title: props.entry.title,
           markdown: props.entry.markdown,
@@ -510,6 +527,9 @@ export function Editor(props: EditorProps) {
   return (
     <EditorForm
       {...props}
+      onDraftPersisted={(savedDraft) => {
+        queryClient.setQueryData(["draft"], savedDraft);
+      }}
       key={draft?.id ?? "new-draft"}
       initialValue={draft ?? emptyDraft}
       draftId={draft?.id}

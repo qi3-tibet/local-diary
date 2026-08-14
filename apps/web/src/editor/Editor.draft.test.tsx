@@ -1,0 +1,144 @@
+// @vitest-environment jsdom
+
+import "@testing-library/jest-dom/vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { DraftInput, Entry } from "@diary/contracts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const getDraft = vi.hoisted(() => vi.fn<() => Promise<Entry | null>>());
+const saveDraft = vi.hoisted(() => vi.fn<(input: DraftInput) => Promise<Entry>>());
+const uploadMusic = vi.hoisted(() => vi.fn());
+
+vi.mock("../api/client", () => ({
+  api: { getDraft, saveDraft, uploadMusic },
+}));
+
+import { Editor } from "./Editor";
+
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve(value: T): void;
+};
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function savedDraft(input: DraftInput): Entry {
+  return {
+    id: "draft-1",
+    ...input,
+    state: "draft",
+    publishedAt: null,
+    createdAt: "2026-08-14T12:00:00.000+08:00",
+    updatedAt: "2026-08-14T12:00:00.000+08:00",
+    deletedAt: null,
+    edited: false,
+    music: null,
+  };
+}
+
+afterEach(cleanup);
+
+describe("Editor draft leave", () => {
+  beforeEach(() => {
+    getDraft.mockReset();
+    getDraft.mockResolvedValue(null);
+    saveDraft.mockReset();
+    uploadMusic.mockReset();
+  });
+
+  it("flushes the latest draft before allowing a registered leave", async () => {
+    const save = deferred<Entry>();
+    const onRegisterLeave = vi.fn();
+    saveDraft.mockReturnValue(save.promise);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Editor {...({
+          onCancel: vi.fn(async () => undefined),
+          onComplete: vi.fn(),
+          onRegisterLeave,
+        } as unknown as Parameters<typeof Editor>[0])} />
+      </QueryClientProvider>,
+    );
+
+    const textarea = await screen.findByRole("textbox", { name: "Markdown body" });
+    fireEvent.change(textarea, { target: { value: "The final text" } });
+    await waitFor(() => expect(onRegisterLeave).toHaveBeenCalled());
+    const leave = onRegisterLeave.mock.calls.at(-1)![0] as () => Promise<boolean>;
+
+    let completed = false;
+    const leaving = leave().then((result) => {
+      completed = result;
+      return result;
+    });
+    await waitFor(() => {
+      expect(saveDraft).toHaveBeenCalledWith({ title: "", markdown: "The final text", tags: [] });
+    });
+    expect(completed).toBe(false);
+
+    const input = saveDraft.mock.calls[0]![0]!;
+    await act(async () => {
+      save.resolve(savedDraft(input));
+      await expect(leaving).resolves.toBe(true);
+    });
+  });
+
+  it("keeps the draft editor open when a registered leave cannot persist", async () => {
+    const onRegisterLeave = vi.fn();
+    saveDraft.mockRejectedValue(new Error("disk unavailable"));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Editor {...({
+          onCancel: vi.fn(async () => undefined),
+          onComplete: vi.fn(),
+          onRegisterLeave,
+        } as unknown as Parameters<typeof Editor>[0])} />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.change(await screen.findByRole("textbox", { name: "Markdown body" }), {
+      target: { value: "Cannot lose this" },
+    });
+    await waitFor(() => expect(onRegisterLeave).toHaveBeenCalled());
+    const leave = onRegisterLeave.mock.calls.at(-1)![0] as () => Promise<boolean>;
+
+    await act(async () => {
+      await expect(leave()).resolves.toBe(false);
+    });
+    expect(screen.getByRole("textbox", { name: "Markdown body" })).toBeInTheDocument();
+    expect(screen.getByText("DRAFT SAVE FAILED")).toBeInTheDocument();
+  });
+
+  it("does not allow a registered leave after an MP3 attachment fails", async () => {
+    const onRegisterLeave = vi.fn();
+    saveDraft.mockImplementation(async (input) => savedDraft(input));
+    uploadMusic.mockRejectedValue(new Error("disk unavailable"));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { container } = render(
+      <QueryClientProvider client={queryClient}>
+        <Editor {...({
+          onCancel: vi.fn(async () => undefined),
+          onComplete: vi.fn(),
+          onRegisterLeave,
+        } as unknown as Parameters<typeof Editor>[0])} />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByRole("textbox", { name: "Markdown body" });
+    const musicInput = container.querySelector<HTMLInputElement>('input[accept="audio/mpeg,.mp3"]')!;
+    fireEvent.change(musicInput, { target: { files: [new File(["audio"], "song.mp3", { type: "audio/mpeg" })] } });
+    await screen.findByText("THE MP3 COULD NOT BE ATTACHED");
+    await waitFor(() => expect(onRegisterLeave).toHaveBeenCalled());
+    const leave = onRegisterLeave.mock.calls.at(-1)![0] as () => Promise<boolean>;
+
+    await expect(leave()).resolves.toBe(false);
+  });
+});
