@@ -376,15 +376,14 @@ function EditorForm({
     }
   }
 
-  useEffect(() => onRegisterLeave?.(isDraft ? leaveDraft : async () => true), [
-    isDraft,
-    leaveDraft,
-    onRegisterLeave,
-  ]);
+  useEffect(() => {
+    const unregister = onRegisterLeave?.(isDraft ? leaveDraft : async () => true);
+    return unregister;
+  }, [isDraft, leaveDraft, onRegisterLeave]);
 
   async function cancel(): Promise<void> {
     if (busy) return;
-    if (await leaveDraft()) await onCancel();
+    await onCancel();
   }
 
   return (
@@ -513,6 +512,7 @@ export function Editor(props: EditorProps) {
         {...props}
         onDraftPersisted={(savedDraft) => {
           queryClient.setQueryData(["draft"], savedDraft);
+          void queryClient.invalidateQueries({ queryKey: ["draft"] });
         }}
         initialValue={{
           title: props.entry.title,
@@ -542,8 +542,9 @@ export function Editor(props: EditorProps) {
       {...props}
       onDraftPersisted={(savedDraft) => {
         queryClient.setQueryData(["draft"], savedDraft);
+        void queryClient.invalidateQueries({ queryKey: ["draft"] });
       }}
-      key={draft?.id ?? "new-draft"}
+      key={draft ? `${draft.id}:${draft.updatedAt}` : "new-draft"}
       initialValue={draft ?? emptyDraft}
       draftId={draft?.id}
       initialMusic={draft?.music}

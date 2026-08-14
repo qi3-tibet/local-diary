@@ -14,6 +14,19 @@ const listDayPage = vi.hoisted(() => vi.fn());
 const listCalendarDays = vi.hoisted(() => vi.fn());
 const getDraft = vi.hoisted(() => vi.fn<() => Promise<Entry | null>>(async () => null));
 const renderTimelineSections = vi.hoisted(() => ({ value: false }));
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve(value: T): void;
+};
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 const targetEntry = vi.hoisted(() => ({
   id: "00000000-0000-4000-8000-000000000001",
   title: "Target",
@@ -73,13 +86,18 @@ vi.mock("../search/SearchPanel", () => ({
   },
 }));
 vi.mock("../editor/Editor", () => ({
-  Editor: (props: { entry?: Entry; onComplete: (entry: Entry) => void }) => {
+  Editor: (props: {
+    entry?: Entry;
+    onComplete: (entry: Entry) => void;
+    onRegisterLeave?: (leave: () => Promise<boolean>) => () => void;
+  }) => {
     editorProps(props);
     return <div data-testid="editor" />;
   },
 }));
 vi.mock("../music/FloatingPlayer", () => ({ FloatingPlayer: () => null }));
-vi.mock("../settings/BackupSettings", () => ({ BackupSettings: () => null }));
+vi.mock("../trash/TrashPanel", () => ({ TrashPanel: () => <div data-testid="trash-panel" /> }));
+vi.mock("../settings/BackupSettings", () => ({ BackupSettings: () => <div data-testid="settings-panel" /> }));
 vi.mock("../settings/RestoreProgress", () => ({ RestoreProgress: () => null }));
 vi.mock("../theme/ThemeControl", () => ({ ThemeControl: () => null }));
 
@@ -146,6 +164,87 @@ describe("App programmatic day navigation", () => {
     await screen.findByTestId("timeline");
     await waitFor(() => expect(getDraft).toHaveBeenCalled());
     expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["Diary", "timeline"],
+    ["New entry", "editor"],
+    ["Search", "search-panel"],
+    ["Trash", "trash-panel"],
+    ["Settings", "settings-panel"],
+  ] as const)("waits for the editor leave callback before opening %s", async (label, destination) => {
+    window.history.replaceState({}, "", "/");
+    const leave = deferred<boolean>();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><App /></QueryClientProvider>);
+    await screen.findByTestId("timeline");
+    act(() => timelineProps.mock.calls.at(-1)![0].onEditEntry(targetEntry));
+    await screen.findByTestId("editor");
+    act(() => editorProps.mock.calls.at(-1)![0].onRegisterLeave(() => leave.promise));
+
+    fireEvent.click(screen.getByRole("button", { name: label }));
+
+    expect(editorProps.mock.calls.at(-1)![0].entry).toEqual(targetEntry);
+    expect(screen.getByTestId("editor")).toBeInTheDocument();
+    if (destination === "editor") {
+      expect(editorProps.mock.calls.at(-1)![0].entry).toEqual(targetEntry);
+    } else if (destination === "settings-panel") {
+      expect(screen.getByTestId(destination)).not.toBeVisible();
+    } else {
+      expect(screen.queryByTestId(destination)).not.toBeInTheDocument();
+    }
+
+    await act(async () => {
+      leave.resolve(true);
+      await leave.promise;
+    });
+    if (destination === "editor") {
+      await waitFor(() => expect(editorProps.mock.calls.at(-1)![0].entry).toBeUndefined());
+    } else if (destination === "settings-panel") {
+      await waitFor(() => expect(screen.getByTestId(destination)).toBeVisible());
+    } else {
+      await screen.findByTestId(destination);
+    }
+  });
+
+  it.each([
+    ["Search", async () => false],
+    ["Trash", async () => { throw new Error("disk unavailable"); }],
+  ])("keeps the editor visible when leaving for %s is refused", async (label, leave) => {
+    window.history.replaceState({}, "", "/");
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><App /></QueryClientProvider>);
+    await screen.findByTestId("timeline");
+    act(() => timelineProps.mock.calls.at(-1)![0].onEditEntry(targetEntry));
+    await screen.findByTestId("editor");
+    act(() => editorProps.mock.calls.at(-1)![0].onRegisterLeave(leave));
+
+    fireEvent.click(screen.getByRole("button", { name: label }));
+
+    await waitFor(() => expect(screen.getByTestId("editor")).toBeInTheDocument());
+    expect(screen.queryByTestId(label === "Search" ? "search-panel" : "trash-panel")).not.toBeInTheDocument();
+  });
+
+  it("shares pending editor leave work across repeated navigation attempts", async () => {
+    window.history.replaceState({}, "", "/");
+    const leave = deferred<boolean>();
+    const leaveCallback = vi.fn(() => leave.promise);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><App /></QueryClientProvider>);
+    await screen.findByTestId("timeline");
+    act(() => timelineProps.mock.calls.at(-1)![0].onEditEntry(targetEntry));
+    await screen.findByTestId("editor");
+    act(() => editorProps.mock.calls.at(-1)![0].onRegisterLeave(leaveCallback));
+
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.click(screen.getByRole("button", { name: "Trash" }));
+
+    expect(leaveCallback).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      leave.resolve(true);
+      await leave.promise;
+    });
+    await screen.findByTestId("trash-panel");
   });
 
   it("keeps retrying the locked jump when its section mounts after the first animation frame", async () => {

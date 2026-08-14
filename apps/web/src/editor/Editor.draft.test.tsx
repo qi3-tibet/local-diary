@@ -186,6 +186,7 @@ describe("Editor draft leave", () => {
   it("updates the draft cache after a media-only leave without another draft save", async () => {
     const onRegisterLeave = vi.fn();
     const created = savedDraft({ title: "", markdown: "", tags: [] });
+    getDraft.mockResolvedValueOnce(null).mockResolvedValueOnce(created).mockResolvedValueOnce(created);
     saveDraft.mockResolvedValue(created);
     uploadMusic.mockResolvedValue(attachedMusic);
     recognizeMusic.mockResolvedValue(attachedMusic);
@@ -225,7 +226,7 @@ describe("Editor draft leave", () => {
         available: true,
       },
     };
-    getDraft.mockResolvedValueOnce(existing).mockResolvedValueOnce(updated);
+    getDraft.mockResolvedValueOnce(existing).mockResolvedValueOnce(updated).mockResolvedValueOnce(updated);
     uploadMusic.mockResolvedValue(attachedMusic);
     recognizeMusic.mockResolvedValue(attachedMusic);
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -266,7 +267,7 @@ describe("Editor draft leave", () => {
       music: initialMusic,
     };
     const updated = { ...existing, music: { ...initialMusic, title: "Updated title" } };
-    getDraft.mockResolvedValueOnce(existing).mockResolvedValueOnce(updated);
+    getDraft.mockResolvedValueOnce(existing).mockResolvedValueOnce(updated).mockResolvedValueOnce(updated);
     patchMusicMetadata.mockResolvedValue({ ...attachedMusic, title: "Updated title" });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
@@ -290,5 +291,80 @@ describe("Editor draft leave", () => {
     await expect(leave()).resolves.toBe(true);
     expect(saveDraft).not.toHaveBeenCalled();
     expect(queryClient.getQueryData(["draft"])).toEqual(updated);
+  });
+
+  it("updates the cache and starts a draft refetch after a successful leave save", async () => {
+    const onRegisterLeave = vi.fn();
+    const persisted = savedDraft({ title: "Saved title", markdown: "Saved body", tags: [] });
+    const refreshed = deferred<Entry | null>();
+    getDraft.mockResolvedValueOnce(null).mockReturnValueOnce(refreshed.promise);
+    saveDraft.mockResolvedValue(persisted);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Editor {...({
+          onCancel: vi.fn(async () => undefined),
+          onComplete: vi.fn(),
+          onRegisterLeave,
+        } as unknown as Parameters<typeof Editor>[0])} />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.change(await screen.findByRole("textbox", { name: "Markdown body" }), {
+      target: { value: "Saved body" },
+    });
+    await waitFor(() => expect(onRegisterLeave).toHaveBeenCalled());
+    const leave = onRegisterLeave.mock.calls.at(-1)![0] as () => Promise<boolean>;
+
+    await expect(leave()).resolves.toBe(true);
+
+    expect(queryClient.getQueryData(["draft"])).toEqual(persisted);
+    await waitFor(() => expect(getDraft).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      refreshed.resolve(persisted);
+      await refreshed.promise;
+    });
+  });
+
+  it("reinitializes a same-id form when the persisted draft revision changes", async () => {
+    const original = savedDraft({ title: "Old title", markdown: "Old body", tags: [] });
+    const saved = {
+      ...original,
+      title: "Saved title",
+      markdown: "Saved body",
+      updatedAt: "2026-08-14T12:00:01.000+08:00",
+    };
+    getDraft.mockResolvedValue(original);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Editor onCancel={vi.fn(async () => undefined)} onComplete={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole("textbox", { name: "Markdown body" })).toHaveValue("Old body");
+    act(() => queryClient.setQueryData(["draft"], saved));
+
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: "Markdown body" })).toHaveValue("Saved body");
+    });
+  });
+
+  it("preserves active typing when a background refetch returns the same draft revision", async () => {
+    const persisted = savedDraft({ title: "Saved title", markdown: "Saved body", tags: [] });
+    getDraft.mockResolvedValue(persisted);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Editor onCancel={vi.fn(async () => undefined)} onComplete={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.change(await screen.findByRole("textbox", { name: "Markdown body" }), {
+      target: { value: "Still typing" },
+    });
+    act(() => queryClient.setQueryData(["draft"], { ...persisted }));
+
+    expect(screen.getByRole("textbox", { name: "Markdown body" })).toHaveValue("Still typing");
   });
 });

@@ -35,6 +35,8 @@ export function App() {
   const [managementError, setManagementError] = useState<string>();
   const [restoreState, setRestoreState] = useState<RestoreState>();
   const [backupWarning, setBackupWarning] = useState<string>();
+  const editorLeave = useRef<(() => Promise<boolean>) | undefined>(undefined);
+  const pendingEditorLeave = useRef<Promise<boolean> | undefined>(undefined);
   const handledRequestedDay = useRef(false);
   const navigationGeneration = useRef(0);
   const navigationLocked = useRef(false);
@@ -167,10 +169,57 @@ export function App() {
     };
   }, [dayPage, jumpTarget, navigationReady]);
 
-  async function showDiary(): Promise<void> {
-    setEditingEntry(undefined);
-    setManagementError(undefined);
-    setView("diary");
+  async function leaveEditorThen(action: () => void | Promise<void>): Promise<void> {
+    if (view !== "editor") {
+      await action();
+      return;
+    }
+    let leave = pendingEditorLeave.current;
+    if (!leave) {
+      leave = Promise.resolve(editorLeave.current ? editorLeave.current() : true)
+        .catch(() => false)
+        .finally(() => {
+          if (pendingEditorLeave.current === leave) pendingEditorLeave.current = undefined;
+        });
+      pendingEditorLeave.current = leave;
+    }
+    if (await leave) await action();
+  }
+
+  function showDiary(): Promise<void> {
+    return leaveEditorThen(() => {
+      setEditingEntry(undefined);
+      setManagementError(undefined);
+      setView("diary");
+    });
+  }
+
+  function showNewEntry(): Promise<void> {
+    return leaveEditorThen(() => {
+      setEditingEntry(undefined);
+      setView("editor");
+      window.requestAnimationFrame(() => {
+        document.querySelector<HTMLInputElement>('[aria-label="Title"]')?.focus();
+      });
+    });
+  }
+
+  function showSearch(): Promise<void> {
+    return leaveEditorThen(() => {
+      setView("search");
+    });
+  }
+
+  function showTrash(): Promise<void> {
+    return leaveEditorThen(() => {
+      setView("trash");
+    });
+  }
+
+  function showSettings(): Promise<void> {
+    return leaveEditorThen(() => {
+      setView("settings");
+    });
   }
 
   function editEntry(entry: Entry): void {
@@ -238,10 +287,12 @@ export function App() {
   }
 
   function openBackupRecovery(): void {
-    setView("settings");
-    window.requestAnimationFrame(() => {
-      const button = document.querySelector<HTMLButtonElement>('[aria-label="Choose backup location"]');
-      button?.focus();
+    void leaveEditorThen(() => {
+      setView("settings");
+      window.requestAnimationFrame(() => {
+        const button = document.querySelector<HTMLButtonElement>('[aria-label="Choose backup location"]');
+        button?.focus();
+      });
     });
   }
 
@@ -379,6 +430,12 @@ export function App() {
         entry={editingEntry}
         onCancel={showDiary}
         onComplete={completeEditor}
+        onRegisterLeave={(leave) => {
+          editorLeave.current = leave;
+          return () => {
+            if (editorLeave.current === leave) editorLeave.current = undefined;
+          };
+        }}
       />
     );
   } else if (view === "search") {
@@ -436,34 +493,22 @@ export function App() {
       />
       <div className="app-main">
         <nav className="workspace-tools" aria-label="Diary tools">
-          <button type="button" aria-label="Diary" disabled={restoreLocked} onClick={showDiary}>DIARY</button>
+          <button type="button" aria-label="Diary" disabled={restoreLocked} onClick={() => void showDiary()}>DIARY</button>
           <button
             type="button"
             aria-label="New entry"
             disabled={restoreLocked}
-            onClick={() => {
-              setEditingEntry(undefined);
-              setView("editor");
-              window.requestAnimationFrame(() => {
-                document.querySelector<HTMLInputElement>('[aria-label="Title"]')?.focus();
-              });
-            }}
+            onClick={() => void showNewEntry()}
           >
             NEW ENTRY
           </button>
-          <button type="button" aria-label="Search" disabled={restoreLocked} onClick={() => {
-            setView("search");
-          }}>
+          <button type="button" aria-label="Search" disabled={restoreLocked} onClick={() => void showSearch()}>
             SEARCH
           </button>
-          <button type="button" aria-label="Trash" disabled={restoreLocked} onClick={() => {
-            setView("trash");
-          }}>
+          <button type="button" aria-label="Trash" disabled={restoreLocked} onClick={() => void showTrash()}>
             TRASH
           </button>
-          <button type="button" aria-label="Settings" disabled={restoreLocked} onClick={() => {
-            setView("settings");
-          }}>
+          <button type="button" aria-label="Settings" disabled={restoreLocked} onClick={() => void showSettings()}>
             SETTINGS
           </button>
         </nav>
