@@ -44,6 +44,26 @@ afterEach(() => {
 });
 
 describe("Editor preview position", () => {
+  it("uses a pressed Material Symbols preview control while hiding media tools in preview", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Editor entry={entry} onCancel={vi.fn()} onComplete={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    const previewToggle = await screen.findByRole("button", { name: "Toggle preview" });
+    expect(screen.getByText("visibility")).toHaveClass("material-symbol");
+    expect(previewToggle).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("add_photo_alternate")).toBeInTheDocument();
+    expect(screen.getByText("library_music")).toBeInTheDocument();
+
+    fireEvent.click(previewToggle);
+    expect(previewToggle).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("add_photo_alternate")).toBeNull();
+    expect(screen.queryByText("library_music")).toBeNull();
+  });
+
   it.each([
     { mode: "editing", currentEntry: entry },
     { mode: "creating", currentEntry: undefined },

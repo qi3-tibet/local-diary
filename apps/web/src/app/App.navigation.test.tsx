@@ -167,6 +167,27 @@ describe("App programmatic day navigation", () => {
     expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
   });
 
+  it("uses labelled Material Symbols header controls and marks only the active view", async () => {
+    window.history.replaceState({}, "", "/");
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><App /></QueryClientProvider>);
+
+    await screen.findByTestId("timeline");
+    for (const [label, icon] of [
+      ["Diary", "home"],
+      ["New entry", "edit_square"],
+      ["Search", "search"],
+      ["Trash", "delete"],
+      ["Settings", "settings"],
+    ]) {
+      const button = screen.getByRole("button", { name: label });
+      expect(button).toHaveAttribute("title", label);
+      expect(button).toContainElement(screen.getByText(icon));
+    }
+    expect(screen.getByRole("button", { name: "Diary" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "Search" })).not.toHaveAttribute("aria-current");
+  });
+
   it.each([
     ["Diary", "timeline"],
     ["New entry", "editor"],

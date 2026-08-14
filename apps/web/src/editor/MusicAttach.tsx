@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import { MaterialSymbol } from "../icons/MaterialSymbol";
 
 type MusicAttachProps = {
   disabled?: boolean;
@@ -27,8 +28,7 @@ export function MusicAttach({ disabled = false, onSelect }: MusicAttachProps) {
         disabled={disabled}
         onClick={() => input.current?.click()}
       >
-        <span className="music-note-stem" aria-hidden="true" />
-        <span className="music-note-head" aria-hidden="true" />
+        <MaterialSymbol name="library_music" />
       </button>
     </div>
   );

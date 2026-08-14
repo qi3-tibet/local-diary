@@ -1,3 +1,5 @@
+import { MaterialSymbol } from "../icons/MaterialSymbol";
+
 export function ModeGlyph({
   preview,
   onToggle,
@@ -13,14 +15,7 @@ export function ModeGlyph({
       aria-pressed={preview}
       onClick={onToggle}
     >
-      <span
-        aria-hidden="true"
-        className={preview ? "glyph-square filled" : "glyph-square"}
-      />
-      <span
-        aria-hidden="true"
-        className={preview ? "glyph-square" : "glyph-square filled"}
-      />
+      <MaterialSymbol name="visibility" />
     </button>
   );
 }

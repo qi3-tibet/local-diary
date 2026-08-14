@@ -21,6 +21,7 @@ import { getBrowserPlayerStore } from "../music/player-store";
 import { BackupSettings } from "../settings/BackupSettings";
 import { RestoreProgress, type RestoreState } from "../settings/RestoreProgress";
 import { useFlushBeforeClose } from "../desktop/close-bridge";
+import { MaterialSymbol } from "../icons/MaterialSymbol";
 
 type View = "diary" | "editor" | "search" | "trash" | "settings";
 type JumpTarget = {
@@ -497,23 +498,27 @@ export function App() {
       />
       <div className="app-main">
         <nav className="workspace-tools" aria-label="Diary tools">
-          <button type="button" aria-label="Diary" disabled={restoreLocked} onClick={() => void showDiary()}>DIARY</button>
+          <button type="button" aria-current={view === "diary" ? "page" : undefined} aria-label="Diary" title="Diary" disabled={restoreLocked} onClick={() => void showDiary()}>
+            <MaterialSymbol name="home" />
+          </button>
           <button
             type="button"
+            aria-current={view === "editor" ? "page" : undefined}
             aria-label="New entry"
+            title="New entry"
             disabled={restoreLocked}
             onClick={() => void showNewEntry()}
           >
-            NEW ENTRY
+            <MaterialSymbol name="edit_square" />
           </button>
-          <button type="button" aria-label="Search" disabled={restoreLocked} onClick={() => void showSearch()}>
-            SEARCH
+          <button type="button" aria-current={view === "search" ? "page" : undefined} aria-label="Search" title="Search" disabled={restoreLocked} onClick={() => void showSearch()}>
+            <MaterialSymbol name="search" />
           </button>
-          <button type="button" aria-label="Trash" disabled={restoreLocked} onClick={() => void showTrash()}>
-            TRASH
+          <button type="button" aria-current={view === "trash" ? "page" : undefined} aria-label="Trash" title="Trash" disabled={restoreLocked} onClick={() => void showTrash()}>
+            <MaterialSymbol name="delete" />
           </button>
-          <button type="button" aria-label="Settings" disabled={restoreLocked} onClick={() => void showSettings()}>
-            SETTINGS
+          <button type="button" aria-current={view === "settings" ? "page" : undefined} aria-label="Settings" title="Settings" disabled={restoreLocked} onClick={() => void showSettings()}>
+            <MaterialSymbol name="settings" />
           </button>
         </nav>
         {managementError ? (

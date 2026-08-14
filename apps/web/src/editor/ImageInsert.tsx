@@ -1,4 +1,5 @@
 import { type ChangeEvent, useRef, useState } from "react";
+import { MaterialSymbol } from "../icons/MaterialSymbol";
 
 type ImageInsertProps = {
   disabled?: boolean;
@@ -42,9 +43,7 @@ export function ImageInsert({ disabled = false, onSelect }: ImageInsertProps) {
         disabled={disabled || uploading}
         onClick={() => input.current?.click()}
       >
-        <span className="image-glyph-frame" aria-hidden="true">
-          <span className="image-glyph-mark" />
-        </span>
+        <MaterialSymbol name="add_photo_alternate" />
       </button>
       {error ? <span className="image-insert-error" role="alert">IMAGE UPLOAD FAILED</span> : null}
     </div>

@@ -2,6 +2,14 @@
 @import "@fontsource/noto-serif-sc/chinese-simplified-600.css";
 
 @font-face {
+  font-family: "Material Symbols Rounded";
+  src: url("../assets/fonts/MaterialSymbolsRounded.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: block;
+}
+
+@font-face {
   font-family: "JetBrainsMono Nerd Font Mono";
   src: url("../assets/fonts/JetBrainsMonoNerdFontMono-Regular.ttf") format("truetype");
   font-style: normal;
