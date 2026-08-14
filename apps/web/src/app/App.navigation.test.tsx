@@ -126,6 +126,7 @@ describe("App programmatic day navigation", () => {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
     })));
+    delete window.diaryDesktop;
   });
 
   afterEach(() => {
@@ -245,6 +246,33 @@ describe("App programmatic day navigation", () => {
       await leave.promise;
     });
     await screen.findByTestId("trash-panel");
+  });
+
+  it("uses the registered editor leave callback for a desktop close request", async () => {
+    let flushBeforeClose!: () => Promise<boolean>;
+    const dispose = vi.fn();
+    window.diaryDesktop = {
+      chooseBackupDirectory: vi.fn(),
+      onFlushBeforeClose: vi.fn((listener) => {
+        flushBeforeClose = listener;
+        return dispose;
+      }),
+    };
+    const leave = vi.fn(async () => false);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(<QueryClientProvider client={queryClient}><App /></QueryClientProvider>);
+    await screen.findByTestId("timeline");
+
+    await expect(flushBeforeClose()).resolves.toBe(true);
+    act(() => timelineProps.mock.calls.at(-1)![0].onEditEntry(targetEntry));
+    await screen.findByTestId("editor");
+    act(() => editorProps.mock.calls.at(-1)![0].onRegisterLeave(leave));
+
+    await expect(flushBeforeClose()).resolves.toBe(false);
+    expect(leave).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("editor")).toBeInTheDocument();
+    view.unmount();
+    expect(dispose).toHaveBeenCalledTimes(1);
   });
 
   it("keeps retrying the locked jump when its section mounts after the first animation frame", async () => {

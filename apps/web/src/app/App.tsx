@@ -20,6 +20,7 @@ import { FloatingPlayer } from "../music/FloatingPlayer";
 import { getBrowserPlayerStore } from "../music/player-store";
 import { BackupSettings } from "../settings/BackupSettings";
 import { RestoreProgress, type RestoreState } from "../settings/RestoreProgress";
+import { useFlushBeforeClose } from "../desktop/close-bridge";
 
 type View = "diary" | "editor" | "search" | "trash" | "settings";
 type JumpTarget = {
@@ -169,11 +170,8 @@ export function App() {
     };
   }, [dayPage, jumpTarget, navigationReady]);
 
-  async function leaveEditorThen(action: () => void | Promise<void>): Promise<void> {
-    if (view !== "editor") {
-      await action();
-      return;
-    }
+  async function requestEditorLeave(): Promise<boolean> {
+    if (view !== "editor") return true;
     let leave = pendingEditorLeave.current;
     if (!leave) {
       leave = Promise.resolve(editorLeave.current ? editorLeave.current() : true)
@@ -183,8 +181,14 @@ export function App() {
         });
       pendingEditorLeave.current = leave;
     }
-    if (await leave) await action();
+    return leave;
   }
+
+  async function leaveEditorThen(action: () => void | Promise<void>): Promise<void> {
+    if (await requestEditorLeave()) await action();
+  }
+
+  useFlushBeforeClose(requestEditorLeave);
 
   function showDiary(): Promise<void> {
     return leaveEditorThen(() => {

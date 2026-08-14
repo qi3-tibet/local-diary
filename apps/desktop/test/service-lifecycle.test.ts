@@ -200,4 +200,47 @@ describe("desktop launch modes", () => {
     releaseStop();
     await vi.waitFor(() => expect(app.quit).toHaveBeenCalledTimes(1));
   });
+
+  it("waits for the managed window to flush and close before stopping the service", async () => {
+    const app = fakeApp();
+    let finishClose!: (closed: boolean) => void;
+    const window = {
+      isDestroyed: vi.fn(() => false), isMinimized: vi.fn(() => false),
+      restore: vi.fn(), focus: vi.fn(),
+      requestClose: vi.fn(() => new Promise<boolean>((resolve) => { finishClose = resolve; })),
+    };
+    const lifecycle = fakeLifecycle();
+    const harness = createDesktopHarness({
+      argv: [], app, shell: { openExternal: vi.fn() }, lifecycle,
+      createWindow: vi.fn(() => window), getWindows: () => [window],
+    });
+    await harness.run();
+
+    app.emit("before-quit", { preventDefault: vi.fn() });
+
+    expect(window.requestClose).toHaveBeenCalledTimes(1);
+    expect(lifecycle.stop).not.toHaveBeenCalled();
+    finishClose(true);
+    await vi.waitFor(() => expect(lifecycle.stop).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not stop the service when the managed window refuses to close", async () => {
+    const app = fakeApp();
+    const window = {
+      isDestroyed: vi.fn(() => false), isMinimized: vi.fn(() => false),
+      restore: vi.fn(), focus: vi.fn(), requestClose: vi.fn(async () => false),
+    };
+    const lifecycle = fakeLifecycle();
+    const harness = createDesktopHarness({
+      argv: [], app, shell: { openExternal: vi.fn() }, lifecycle,
+      createWindow: vi.fn(() => window), getWindows: () => [window],
+    });
+    await harness.run();
+
+    app.emit("before-quit", { preventDefault: vi.fn() });
+
+    await vi.waitFor(() => expect(window.requestClose).toHaveBeenCalledTimes(1));
+    expect(lifecycle.stop).not.toHaveBeenCalled();
+    expect(app.quit).not.toHaveBeenCalled();
+  });
 });

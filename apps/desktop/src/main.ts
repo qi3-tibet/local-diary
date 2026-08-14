@@ -13,6 +13,7 @@ type DesktopWindow = {
   isMinimized(): boolean;
   restore(): void;
   focus(): void;
+  requestClose?(): Promise<boolean>;
 };
 
 type AppEvent = { preventDefault(): void };
@@ -60,11 +61,21 @@ export function createDesktopHarness(options: DesktopHarnessOptions) {
 
   const closeServiceThenQuit = () => {
     if (shutdown) return shutdown;
-    shutdown = options.lifecycle.stop().catch(() => undefined).then(() => {
+    const current = (async () => {
+      const target = window;
+      if (target && !target.isDestroyed?.() && target.requestClose) {
+        const closed = await target.requestClose();
+        if (!closed) return;
+      }
+      await options.lifecycle.stop().catch(() => undefined);
       quitAfterShutdown = true;
       options.app.quit();
+    })();
+    shutdown = current;
+    void current.finally(() => {
+      if (!quitAfterShutdown && shutdown === current) shutdown = undefined;
     });
-    return shutdown;
+    return current;
   };
 
   const openDesktopWindow = async (reuseExisting = true) => {
