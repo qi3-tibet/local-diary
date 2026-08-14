@@ -120,8 +120,10 @@ function CopyIcon({ copied }: { copied: boolean }) {
 
   return (
     <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
-      <rect x="9" y="9" width="11" height="11" rx="1.5" />
-      <path d="M15 9V5.5A1.5 1.5 0 0 0 13.5 4h-8A1.5 1.5 0 0 0 4 5.5v8A1.5 1.5 0 0 0 5.5 15H9" />
+      <g transform="translate(24 0) scale(-1 1)">
+        <rect x="9" y="9" width="11" height="11" rx="1.5" />
+        <path d="M15 9V5.5A1.5 1.5 0 0 0 13.5 4h-8A1.5 1.5 0 0 0 4 5.5v8A1.5 1.5 0 0 0 5.5 15H9" />
+      </g>
     </svg>
   );
 }

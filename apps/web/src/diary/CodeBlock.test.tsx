@@ -54,6 +54,8 @@ it("uses an icon-only control to copy the exact fenced source", async () => {
   expect(writeText).toHaveBeenCalledWith("const answer = 42;");
   expect(screen.getByRole("button", { name: "Copy code" }).textContent).toBe("");
   expect(screen.getByRole("button", { name: "Copy code" }).querySelector("svg")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Copy code" }).querySelector("svg g"))
+    .toHaveAttribute("transform", "translate(24 0) scale(-1 1)");
   expect(await screen.findByRole("button", { name: "Copied" })).toBeVisible();
 });
 
