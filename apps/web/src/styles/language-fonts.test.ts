@@ -39,6 +39,10 @@ describe("offline language typography", () => {
     expect(tokensCss).toContain("JetBrainsMonoNerdFontMono-SemiBold.ttf");
     expect(ruleFor(".entry-body :not(pre) > code")).toContain("font-family: var(--code-font)");
     expect(ruleFor(".entry-code-block")).toContain("font-family: var(--code-font)");
+    expect(ruleFor(".entry-code-highlight pre,\n.entry-code-block > pre"))
+      .toContain("font-family: var(--code-font)");
+    expect(ruleFor(".entry-code-highlight code,\n.entry-code-block > pre > code"))
+      .toContain("font-family: var(--code-font)");
   });
 
   it("copies the terminal-font license into the distributable public assets", () => {

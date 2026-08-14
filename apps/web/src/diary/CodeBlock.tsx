@@ -90,8 +90,14 @@ export function CodeBlock({ children, className }: CodeBlockProps) {
     <section className="entry-code-block">
       <div className="entry-code-toolbar">
         <span>{label}</span>
-        <button className="entry-code-copy" type="button" onClick={() => void copy()}>
-          {copied ? "Copied" : "Copy code"}
+        <button
+          aria-label={copied ? "Copied" : "Copy code"}
+          className="entry-code-copy"
+          title={copied ? "Copied" : "Copy code"}
+          type="button"
+          onClick={() => void copy()}
+        >
+          <CopyIcon copied={copied} />
         </button>
       </div>
       {html ? (
@@ -100,6 +106,23 @@ export function CodeBlock({ children, className }: CodeBlockProps) {
         <pre><code className={className}>{source}</code></pre>
       )}
     </section>
+  );
+}
+
+function CopyIcon({ copied }: { copied: boolean }) {
+  if (copied) {
+    return (
+      <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+        <path d="m5 12 4 4L19 6" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+      <rect x="9" y="9" width="11" height="11" rx="1.5" />
+      <path d="M15 9V5.5A1.5 1.5 0 0 0 13.5 4h-8A1.5 1.5 0 0 0 4 5.5v8A1.5 1.5 0 0 0 5.5 15H9" />
+    </svg>
   );
 }
 

@@ -514,6 +514,15 @@ button.calendar-day[aria-current="date"] {
   transition: background-color 120ms ease;
 }
 
+.entry-code-copy svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
 .entry-code-copy:hover,
 .entry-code-copy:focus-visible {
   background: color-mix(in srgb, var(--ink), transparent 90%);
@@ -526,6 +535,7 @@ button.calendar-day[aria-current="date"] {
   overflow-x: auto;
   background: transparent !important;
   color: var(--ink);
+  font-family: var(--code-font);
 }
 
 .entry-code-highlight code,
@@ -533,7 +543,7 @@ button.calendar-day[aria-current="date"] {
   display: block;
   width: max-content;
   min-width: 100%;
-  font-family: inherit;
+  font-family: var(--code-font);
   font-size: inherit;
   line-height: inherit;
 }

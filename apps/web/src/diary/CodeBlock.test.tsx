@@ -44,7 +44,7 @@ it("uses the Dark+ grammar theme when the diary is dark", async () => {
   });
 });
 
-it("copies the exact fenced source", async () => {
+it("uses an icon-only control to copy the exact fenced source", async () => {
   const writeText = vi.fn().mockResolvedValue(undefined);
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
   render(<CodeBlock className="language-ts">const answer = 42;</CodeBlock>);
@@ -52,6 +52,8 @@ it("copies the exact fenced source", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Copy code" }));
 
   expect(writeText).toHaveBeenCalledWith("const answer = 42;");
+  expect(screen.getByRole("button", { name: "Copy code" }).textContent).toBe("");
+  expect(screen.getByRole("button", { name: "Copy code" }).querySelector("svg")).toBeInTheDocument();
   expect(await screen.findByRole("button", { name: "Copied" })).toBeVisible();
 });
 
