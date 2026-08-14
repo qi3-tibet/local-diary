@@ -10,9 +10,10 @@ const getDraft = vi.hoisted(() => vi.fn<() => Promise<Entry | null>>());
 const saveDraft = vi.hoisted(() => vi.fn<(input: DraftInput) => Promise<Entry>>());
 const uploadMusic = vi.hoisted(() => vi.fn());
 const recognizeMusic = vi.hoisted(() => vi.fn());
+const patchMusicMetadata = vi.hoisted(() => vi.fn());
 
 vi.mock("../api/client", () => ({
-  api: { getDraft, saveDraft, uploadMusic, recognizeMusic },
+  api: { getDraft, saveDraft, uploadMusic, recognizeMusic, patchMusicMetadata },
 }));
 
 import { Editor } from "./Editor";
@@ -64,6 +65,7 @@ describe("Editor draft leave", () => {
     saveDraft.mockReset();
     uploadMusic.mockReset();
     recognizeMusic.mockReset();
+    patchMusicMetadata.mockReset();
   });
 
   it("flushes the latest draft before allowing a registered leave", async () => {
@@ -241,6 +243,47 @@ describe("Editor draft leave", () => {
     const musicInput = container.querySelector<HTMLInputElement>('input[accept="audio/mpeg,.mp3"]')!;
     fireEvent.change(musicInput, { target: { files: [new File(["audio"], "song.mp3", { type: "audio/mpeg" })] } });
     await screen.findByRole("region", { name: "Music metadata" });
+    await waitFor(() => expect(onRegisterLeave).toHaveBeenCalled());
+    const leave = onRegisterLeave.mock.calls.at(-1)![0] as () => Promise<boolean>;
+
+    await expect(leave()).resolves.toBe(true);
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(queryClient.getQueryData(["draft"])).toEqual(updated);
+  });
+
+  it("refreshes the cache after saving metadata without changing the draft text", async () => {
+    const onRegisterLeave = vi.fn();
+    const initialMusic = {
+      ...attachedMusic,
+      originalFilename: "song.mp3",
+      streamUrl: "/api/v1/music/draft-existing",
+      coverUrl: null,
+      available: true,
+    };
+    const existing = {
+      ...savedDraft({ title: "", markdown: "", tags: [] }),
+      id: "draft-existing",
+      music: initialMusic,
+    };
+    const updated = { ...existing, music: { ...initialMusic, title: "Updated title" } };
+    getDraft.mockResolvedValueOnce(existing).mockResolvedValueOnce(updated);
+    patchMusicMetadata.mockResolvedValue({ ...attachedMusic, title: "Updated title" });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Editor {...({
+          onCancel: vi.fn(async () => undefined),
+          onComplete: vi.fn(),
+          onRegisterLeave,
+        } as unknown as Parameters<typeof Editor>[0])} />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.change(await screen.findByRole("textbox", { name: "Song title" }), {
+      target: { value: "Updated title" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save music metadata" }));
+    await waitFor(() => expect(patchMusicMetadata).toHaveBeenCalled());
     await waitFor(() => expect(onRegisterLeave).toHaveBeenCalled());
     const leave = onRegisterLeave.mock.calls.at(-1)![0] as () => Promise<boolean>;
 

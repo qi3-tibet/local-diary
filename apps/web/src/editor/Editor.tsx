@@ -200,6 +200,7 @@ function EditorForm({
       try {
         await work();
         musicOperationFailed.current = false;
+        mediaChanged.current = true;
       } catch (error) {
         musicOperationFailed.current = true;
         throw error;
@@ -228,7 +229,6 @@ function EditorForm({
         const recognized = await api.recognizeMusic(entryId);
         setMusic({ ...withFilename, ...recognized });
         setMusicCandidates(recognized.candidates ?? []);
-        mediaChanged.current = true;
       } catch {
         recognitionFailed = true;
         setMusicError("MUSIC RECOGNITION IS UNAVAILABLE");
