@@ -79,6 +79,7 @@ function EditorForm({
   const uploadFailed = useRef(false);
   const musicOperationFailed = useRef(false);
   const mediaDraft = useRef<Entry | undefined>(undefined);
+  const mediaChanged = useRef(false);
   const isDraft = !entry;
 
   const draftPersistence = useSilentDraft(value, api.saveDraft, isDraft && !submitting);
@@ -147,6 +148,7 @@ function EditorForm({
       const nextValue = { ...latestValue.current, markdown: insertion.value };
       latestValue.current = nextValue;
       setValue(nextValue);
+      mediaChanged.current = true;
       uploadAnchor.current = null;
 
       window.requestAnimationFrame(() => {
@@ -226,6 +228,7 @@ function EditorForm({
         const recognized = await api.recognizeMusic(entryId);
         setMusic({ ...withFilename, ...recognized });
         setMusicCandidates(recognized.candidates ?? []);
+        mediaChanged.current = true;
       } catch {
         recognitionFailed = true;
         setMusicError("MUSIC RECOGNITION IS UNAVAILABLE");
@@ -360,7 +363,9 @@ function EditorForm({
     try {
       await Promise.all([pendingUpload.current, pendingMusic.current]);
       if (uploadFailed.current || musicOperationFailed.current) throw new Error("MEDIA_OPERATION_FAILED");
-      const savedDraft = await draftPersistence.finalize(latestValue.current) ?? mediaDraft.current;
+      const finalizedDraft = await draftPersistence.finalize(latestValue.current);
+      const savedDraft = finalizedDraft
+        ?? (mediaChanged.current ? await api.getDraft() ?? mediaDraft.current : mediaDraft.current);
       if (savedDraft) onDraftPersisted(savedDraft);
       return true;
     } catch {

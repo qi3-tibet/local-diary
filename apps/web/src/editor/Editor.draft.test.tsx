@@ -209,4 +209,43 @@ describe("Editor draft leave", () => {
     expect(saveDraft).toHaveBeenCalledTimes(1);
     expect(queryClient.getQueryData(["draft"])).toEqual(created);
   });
+
+  it("refreshes an existing draft cache after a media-only leave", async () => {
+    const onRegisterLeave = vi.fn();
+    const existing = { ...savedDraft({ title: "", markdown: "", tags: [] }), id: "draft-existing" };
+    const updated = {
+      ...existing,
+      music: {
+        ...attachedMusic,
+        originalFilename: "song.mp3",
+        streamUrl: "/api/v1/music/draft-existing",
+        coverUrl: null,
+        available: true,
+      },
+    };
+    getDraft.mockResolvedValueOnce(existing).mockResolvedValueOnce(updated);
+    uploadMusic.mockResolvedValue(attachedMusic);
+    recognizeMusic.mockResolvedValue(attachedMusic);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { container } = render(
+      <QueryClientProvider client={queryClient}>
+        <Editor {...({
+          onCancel: vi.fn(async () => undefined),
+          onComplete: vi.fn(),
+          onRegisterLeave,
+        } as unknown as Parameters<typeof Editor>[0])} />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByRole("textbox", { name: "Markdown body" });
+    const musicInput = container.querySelector<HTMLInputElement>('input[accept="audio/mpeg,.mp3"]')!;
+    fireEvent.change(musicInput, { target: { files: [new File(["audio"], "song.mp3", { type: "audio/mpeg" })] } });
+    await screen.findByRole("region", { name: "Music metadata" });
+    await waitFor(() => expect(onRegisterLeave).toHaveBeenCalled());
+    const leave = onRegisterLeave.mock.calls.at(-1)![0] as () => Promise<boolean>;
+
+    await expect(leave()).resolves.toBe(true);
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(queryClient.getQueryData(["draft"])).toEqual(updated);
+  });
 });
