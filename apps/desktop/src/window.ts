@@ -91,17 +91,23 @@ export async function createDiaryWindow(localUrl: string, runtime?: WindowRuntim
     event.preventDefault();
     openExternal(targetUrl);
   });
-  const managedWindow = coordinateWindowClose(window, electron.ipcMain);
-  await window.loadURL(localUrl);
+  const coordinator = coordinateWindowClose(window, electron.ipcMain);
+  try {
+    await window.loadURL(localUrl);
+  } catch (error) {
+    coordinator.dispose();
+    window.close();
+    throw error;
+  }
   window.show();
-  return managedWindow;
+  return coordinator.window;
 }
 
 function coordinateWindowClose(
   window: NativeDiaryWindow,
   ipcMain: WindowRuntime["ipcMain"],
   timeoutMs = 5_000,
-): ManagedDiaryWindow {
+): { window: ManagedDiaryWindow; dispose(): void } {
   let closeAllowed = false;
   let flushInProgress = false;
   let disposed = false;
@@ -187,7 +193,7 @@ function coordinateWindowClose(
   ipcMain.on("diary:flush-before-close:result", handleResult);
   window.on("close", handleClose);
   window.on("closed", handleClosed);
-  return Object.assign(window, { requestClose });
+  return { window: Object.assign(window, { requestClose }), dispose };
 }
 
 function isAllowedResult(

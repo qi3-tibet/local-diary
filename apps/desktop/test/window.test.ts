@@ -63,6 +63,13 @@ function windowRuntime() {
       browserWindow.close();
       return { listenerCount: (ipcListeners.get("diary:flush-before-close:result") ?? []).length };
     },
+    listenerCounts() {
+      return {
+        close: (windowListeners.get("close") ?? []).length,
+        closed: (windowListeners.get("closed") ?? []).length,
+        ipc: (ipcListeners.get("diary:flush-before-close:result") ?? []).length,
+      };
+    },
     acknowledge(ok: boolean, requestId = browserWindow.webContents.send.mock.calls.at(-1)?.[1]) {
       for (const listener of ipcListeners.get("diary:flush-before-close:result") ?? []) {
         listener({ sender: browserWindow.webContents }, { ok, requestId });
@@ -72,6 +79,24 @@ function windowRuntime() {
 }
 
 describe("secure diary window navigation", () => {
+  it("cleans up close coordination and closes the hidden window when loading fails", async () => {
+    const harness = windowRuntime();
+    const failure = new Error("renderer failed to load");
+    harness.browserWindow.loadURL.mockRejectedValueOnce(failure);
+
+    await expect(createDiaryWindow("http://127.0.0.1:45678", harness.runtime)).rejects.toThrow(failure);
+
+    expect(harness.runtime.ipcMain.removeListener).toHaveBeenCalledWith(
+      "diary:flush-before-close:result",
+      expect.any(Function),
+    );
+    expect(harness.browserWindow.removeListener).toHaveBeenCalledWith("close", expect.any(Function));
+    expect(harness.browserWindow.removeListener).toHaveBeenCalledWith("closed", expect.any(Function));
+    expect(harness.browserWindow.close).toHaveBeenCalledTimes(1);
+    expect(harness.browserWindow.show).not.toHaveBeenCalled();
+    expect(harness.listenerCounts()).toEqual({ close: 0, closed: 0, ipc: 0 });
+  });
+
   it("keeps only the exact loopback origin in-window and hands off safe external links", async () => {
     const harness = windowRuntime();
     await createDiaryWindow("http://127.0.0.1:45678", harness.runtime);
