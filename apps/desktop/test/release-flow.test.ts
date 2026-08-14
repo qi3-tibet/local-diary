@@ -63,6 +63,20 @@ it("defaults backups to a clear Documents location outside application data", ()
   expect(roots.backupRoot).toBe("C:\\Users\\Ada\\Documents\\Local Diary Backups");
 });
 
+it("uses workspace web assets when an Electron preview has no packaged web bundle", () => {
+  const electronResources = "C:\\Workspace\\node_modules\\electron\\dist\\resources";
+  const roots = resolveDesktopRoots(
+    "C:\\Users\\Ada\\AppData\\Roaming\\Local Diary",
+    "C:\\Workspace\\apps\\desktop",
+    electronResources,
+    "C:\\Users\\Ada\\Documents",
+    undefined,
+    (candidate) => candidate !== `${electronResources}\\web`,
+  );
+
+  expect(roots.webAssetsRoot).toBe("C:\\Workspace\\apps\\web\\dist");
+});
+
 it("allows an explicit absolute backup root for isolated release verification", () => {
   const roots = resolveDesktopRoots(
     "C:\\Temp\\LocalDiarySmoke",

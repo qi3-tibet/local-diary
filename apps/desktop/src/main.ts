@@ -173,11 +173,13 @@ export function resolveDesktopRoots(
   resourcesPath?: string,
   documentsPath?: string,
   backupRootOverride?: string,
+  webAssetsExist: (candidate: string) => boolean = existsSync,
 ): DesktopRoots {
   const externalRoot = path.resolve(userData);
   if (backupRootOverride && !path.isAbsolute(backupRootOverride)) {
     throw new Error("Backup root override must be absolute.");
   }
+  const packagedWebAssets = resourcesPath ? path.join(resourcesPath, "web") : undefined;
   return {
     dataRoot: path.join(externalRoot, "data"),
     backupRoot: backupRootOverride
@@ -187,8 +189,8 @@ export function resolveDesktopRoots(
       : path.join(externalRoot, "backups"),
     tempRoot: path.join(externalRoot, "temp"),
     logRoot: path.join(externalRoot, "logs"),
-    webAssetsRoot: resourcesPath
-      ? path.join(resourcesPath, "web")
+    webAssetsRoot: packagedWebAssets && webAssetsExist(packagedWebAssets)
+      ? packagedWebAssets
       : path.resolve(appPath, "..", "web", "dist"),
   };
 }
