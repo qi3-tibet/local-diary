@@ -9,9 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const getDraft = vi.hoisted(() => vi.fn<() => Promise<Entry | null>>());
 const saveDraft = vi.hoisted(() => vi.fn<(input: DraftInput) => Promise<Entry>>());
 const uploadMusic = vi.hoisted(() => vi.fn());
+const recognizeMusic = vi.hoisted(() => vi.fn());
 
 vi.mock("../api/client", () => ({
-  api: { getDraft, saveDraft, uploadMusic },
+  api: { getDraft, saveDraft, uploadMusic, recognizeMusic },
 }));
 
 import { Editor } from "./Editor";
@@ -43,6 +44,17 @@ function savedDraft(input: DraftInput): Entry {
   };
 }
 
+const attachedMusic = {
+  mediaId: "00000000-0000-4000-8000-000000000011",
+  title: null,
+  artist: null,
+  album: null,
+  year: null,
+  coverMediaId: null,
+  coverMime: null,
+  recognitionStatus: "manual_required" as const,
+};
+
 afterEach(cleanup);
 
 describe("Editor draft leave", () => {
@@ -51,6 +63,7 @@ describe("Editor draft leave", () => {
     getDraft.mockResolvedValue(null);
     saveDraft.mockReset();
     uploadMusic.mockReset();
+    recognizeMusic.mockReset();
   });
 
   it("flushes the latest draft before allowing a registered leave", async () => {
@@ -140,5 +153,60 @@ describe("Editor draft leave", () => {
     const leave = onRegisterLeave.mock.calls.at(-1)![0] as () => Promise<boolean>;
 
     await expect(leave()).resolves.toBe(false);
+  });
+
+  it("does not allow a registered leave after MP3 recognition fails", async () => {
+    const onRegisterLeave = vi.fn();
+    saveDraft.mockImplementation(async (input) => savedDraft(input));
+    uploadMusic.mockResolvedValue(attachedMusic);
+    recognizeMusic.mockRejectedValue(new Error("recognition unavailable"));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { container } = render(
+      <QueryClientProvider client={queryClient}>
+        <Editor {...({
+          onCancel: vi.fn(async () => undefined),
+          onComplete: vi.fn(),
+          onRegisterLeave,
+        } as unknown as Parameters<typeof Editor>[0])} />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByRole("textbox", { name: "Markdown body" });
+    const musicInput = container.querySelector<HTMLInputElement>('input[accept="audio/mpeg,.mp3"]')!;
+    fireEvent.change(musicInput, { target: { files: [new File(["audio"], "song.mp3", { type: "audio/mpeg" })] } });
+    await screen.findByText("MUSIC RECOGNITION IS UNAVAILABLE");
+    await waitFor(() => expect(onRegisterLeave).toHaveBeenCalled());
+    const leave = onRegisterLeave.mock.calls.at(-1)![0] as () => Promise<boolean>;
+
+    await expect(leave()).resolves.toBe(false);
+  });
+
+  it("updates the draft cache after a media-only leave without another draft save", async () => {
+    const onRegisterLeave = vi.fn();
+    const created = savedDraft({ title: "", markdown: "", tags: [] });
+    saveDraft.mockResolvedValue(created);
+    uploadMusic.mockResolvedValue(attachedMusic);
+    recognizeMusic.mockResolvedValue(attachedMusic);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { container } = render(
+      <QueryClientProvider client={queryClient}>
+        <Editor {...({
+          onCancel: vi.fn(async () => undefined),
+          onComplete: vi.fn(),
+          onRegisterLeave,
+        } as unknown as Parameters<typeof Editor>[0])} />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByRole("textbox", { name: "Markdown body" });
+    const musicInput = container.querySelector<HTMLInputElement>('input[accept="audio/mpeg,.mp3"]')!;
+    fireEvent.change(musicInput, { target: { files: [new File(["audio"], "song.mp3", { type: "audio/mpeg" })] } });
+    await screen.findByRole("region", { name: "Music metadata" });
+    await waitFor(() => expect(onRegisterLeave).toHaveBeenCalled());
+    const leave = onRegisterLeave.mock.calls.at(-1)![0] as () => Promise<boolean>;
+
+    await expect(leave()).resolves.toBe(true);
+    expect(saveDraft).toHaveBeenCalledTimes(1);
+    expect(queryClient.getQueryData(["draft"])).toEqual(created);
   });
 });

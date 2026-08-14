@@ -78,6 +78,7 @@ function EditorForm({
   const pendingMusic = useRef<Promise<void> | null>(null);
   const uploadFailed = useRef(false);
   const musicOperationFailed = useRef(false);
+  const mediaDraft = useRef<Entry | undefined>(undefined);
   const isDraft = !entry;
 
   const draftPersistence = useSilentDraft(value, api.saveDraft, isDraft && !submitting);
@@ -109,6 +110,14 @@ function EditorForm({
     setPreview((current) => !current);
   }
 
+  async function ensureUploadEntryId(): Promise<string> {
+    if (uploadEntryId.current) return uploadEntryId.current;
+    const savedDraft = await api.saveDraft(latestValue.current);
+    uploadEntryId.current = savedDraft.id;
+    mediaDraft.current = savedDraft;
+    return savedDraft.id;
+  }
+
   async function insertImage(image: File): Promise<void> {
     const field = textarea.current;
     if (!field) return;
@@ -117,9 +126,7 @@ function EditorForm({
       revision: interactionRevision.current,
       affinity: "left",
     };
-    const entryId = uploadEntryId.current
-      ?? (await api.saveDraft(latestValue.current)).id;
-    uploadEntryId.current = entryId;
+    const entryId = await ensureUploadEntryId();
     try {
       const uploaded = await api.uploadImage(entryId, image);
       const tracked = uploadAnchor.current;
@@ -206,10 +213,9 @@ function EditorForm({
   }
 
   function selectMusic(file: File): Promise<void> {
+    let recognitionFailed = false;
     return coordinateMusic(async () => {
-      const entryId = uploadEntryId.current
-        ?? (await api.saveDraft(latestValue.current)).id;
-      uploadEntryId.current = entryId;
+      const entryId = await ensureUploadEntryId();
       const attached = await api.uploadMusic(entryId, file);
       const withFilename = {
         ...attached,
@@ -221,10 +227,12 @@ function EditorForm({
         setMusic({ ...withFilename, ...recognized });
         setMusicCandidates(recognized.candidates ?? []);
       } catch {
+        recognitionFailed = true;
         setMusicError("MUSIC RECOGNITION IS UNAVAILABLE");
+        throw new Error("MUSIC_RECOGNITION_UNAVAILABLE");
       }
     }).catch(() => {
-      setMusicError("THE MP3 COULD NOT BE ATTACHED");
+      if (!recognitionFailed) setMusicError("THE MP3 COULD NOT BE ATTACHED");
     });
   }
 
@@ -352,7 +360,7 @@ function EditorForm({
     try {
       await Promise.all([pendingUpload.current, pendingMusic.current]);
       if (uploadFailed.current || musicOperationFailed.current) throw new Error("MEDIA_OPERATION_FAILED");
-      const savedDraft = await draftPersistence.finalize(latestValue.current);
+      const savedDraft = await draftPersistence.finalize(latestValue.current) ?? mediaDraft.current;
       if (savedDraft) onDraftPersisted(savedDraft);
       return true;
     } catch {
